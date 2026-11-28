@@ -24,6 +24,12 @@ vi.mock('../src/main/crypto/master-key', () => ({
   masterKeyManager: { getFieldKey: () => FIELD_KEY }
 }))
 
+// SEC-16-07 后 secret-store 经 dbService → portable 引到 electron：
+// node 环境下 electron 的 app 是 undefined，桩一个未打包形态即可让模块链纯本地求值
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getPath: () => process.cwd(), getAppPath: () => process.cwd() }
+}))
+
 vi.mock('../src/main/db/repositories/app-config.repo', () => ({
   appConfigRepo: {
     get: (key: string) => store.get(key) ?? null,

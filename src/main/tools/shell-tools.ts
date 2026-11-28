@@ -33,6 +33,12 @@ export interface CommandClassification {
 const REASON_ROOT_DELETE: ToolPolicyReasonCode = 'BLOCKED_ROOT_DELETE'
 const REASON_OUTSIDE: ToolPolicyReasonCode = 'DANGEROUS_OUTSIDE'
 const REASON_REQUIRES_CONFIRM: ToolPolicyReasonCode = 'REQUIRES_CONFIRM'
+// SEC-16-05 新增规则的 reason 复用既有码：裸设备抹除归「整盘擦除」、删卷影归「系统删除」。
+// 文档建议的独立码（BLOCKED_RAW_DEVICE / BLOCKED_SHADOW_DELETE）需要同步扩
+// src/shared/tool-policy-reasons.ts 联合类型与渲染端 ToolPolicyDialog/i18n 映射，两者都在
+// 本次改动分区之外；复用语义相近的既有码（i18n 已有四语文案），deny 拦截行为与文档完全一致。
+const REASON_RAW_DEVICE: ToolPolicyReasonCode = 'BLOCKED_CIPHER_WIPE'
+const REASON_SHADOW_DELETE: ToolPolicyReasonCode = 'BLOCKED_SYSTEM_DELETE'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MIN_TIMEOUT_MS = 10_000
@@ -120,15 +126,28 @@ const DENY_RULES: Array<[RegExp, ToolPolicyReasonCode]> = [
   // POSIX fork 炸弹  :(){ :|:& };:
   [/:\s*\(\s*\)\s*\{[^}]*:\s*\|[^}]*\}\s*;/, 'BLOCKED_FORKBOMB'],
   // Windows %0|%0 自启动炸弹
-  [/%0\s*\|%0/, 'BLOCKED_FORKBOMB']
+  [/%0\s*\|%0/, 'BLOCKED_FORKBOMB'],
+  // ── SEC-16-05 补齐：裸设备抹除 / 卷影删除（此前落 allow，无审批直跑）──
+  // dd 覆盖块设备：NVMe / eMMC / 分区后缀（/dev/sda、/dev/nvme0n1、/dev/nvme0n1p1、/dev/mmcblk0p1 等）。
+  // 只盯 of= 目标设备——dd if=/dev/sda of=backup.img（读出来做备份）不命中，交给后面的外部路径确认。
+  [/\bdd\b[^|&;\r\n]*\bof=\/dev\/(?:[sh]d[a-z]|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?)\d*\b/i, REASON_RAW_DEVICE],
+  // Windows 抹盘：fsutil 的 setZeroData 子命令
+  [/\bfsutil\b[^|&;\r\n]*\bsetzerodata\b/i, REASON_RAW_DEVICE],
+  // POSIX 抹盘三件套：wipefs（抹文件系统签名）、shred（覆写文件）、blkdiscard（丢弃块设备扇区）
+  [/\b(?:wipefs|shred|blkdiscard)\b/i, REASON_RAW_DEVICE],
+  // 删卷影副本（勒索软件删除本地备份的前摇）
+  [/\bvssadmin\b[^|&;\r\n]*\bdelete\b[^|&;\r\n]*\bshadows\b/i, REASON_SHADOW_DELETE]
 ]
 
-// 裸根递归删除（rm -rf / 、rm -rf C:\ 、del/rd C:\ 根或根通配 c:\*）
+// 裸根递归删除（rm -rf / 及其变体、del/rd/remove-item C:\ 盘符根或根通配 c:\*）
+// SEC-16-05：原表只认字面量 `rm -rf /`，加个 `2>/dev/null` 就降级成 confirm；裸 `~` 变体
+// 和 PowerShell 的 remove-item 动词也不在列——一并补齐。
 const ROOT_DELETE_RE = [
-  // POSIX: rm 带 r/f 且目标为裸 / 或 /*
-  /\brm\b[^|&;\r\n]*-[^|&;\r\n]*[rf][^|&;\r\n]*\s\/(?:\*?\s*$|\*)/i,
-  // 任意删除工具指向盘符根（C:\ 后直接结束、空白或通配符）
-  /\b(?:rm|del|erase|rd|rmdir)\b[^|&;\r\n]*\b[a-z]:[\\/](?:\s|$|\*)/i
+  // POSIX: rm 带 r/f 且目标为裸 /、~、~/、$HOME、/.、/..、//（裸 ~ 不带斜杠也算；尾随目标
+  // 只认空白/结尾/通配符/`.`，`rm -rf ~/projects` 这类子路径仍走 confirm 档）
+  /\brm\b[^|&;\r\n]*-[^|&;\r\n]*[rf][^|&;\r\n]*\s(?:\/|~(?:\/)?|\$HOME|\/\.|\/\.\.|\/\/)(?:\s|$|\*|\.)/i,
+  // 任意删除工具指向盘符根（C:\ 后直接结束、空白或通配符）；remove-item 为 PowerShell 等效动词
+  /\b(?:rm|del|erase|rd|rmdir|remove-item)\b[^|&;\r\n]*\b[a-z]:[\\/](?:\s|$|\*)/i
 ]
 
 // ---------- confirm（危险特征：需用户审批） ----------
@@ -278,8 +297,10 @@ export function classifyCommand(command: string, workspaceAbs: string): CommandC
       return { decision: 'confirm', reason: REASON_OUTSIDE, risk: 'danger', forceConfirm: true }
     }
   }
-  // POSIX 风格 /etc、/usr、/bin、/sbin、/System、私有目录等
-  if (/(^|[\s="'`(])\/(?:etc|usr|bin|sbin|System|private|var\/root|var\/tmp|tmp)(?:[\\/]|\b)/.test(cmd)) {
+  // POSIX 风格系统目录（SEC-16-05 补齐 dev/home/root/opt/boot/srv；~ 开头的路径也展开覆盖，
+  // 否则 `cat ~/…` 只能靠后面的危险特征表兜底）。`2>/dev/null` 这类紧贴重定向符的写法前缀是
+  // `>`，不在前缀字符类里，不命中本条。
+  if (/(?:^|[\s="'`(]|~)\/(?:etc|usr|bin|sbin|dev|home|root|opt|boot|srv|System|private|var\/root|var\/tmp|tmp)(?:[\\/]|\b)/.test(cmd)) {
     return { decision: 'confirm', reason: REASON_OUTSIDE, risk: 'danger', forceConfirm: true }
   }
 
@@ -310,6 +331,28 @@ export function classifyDenyOnly(command: string): ToolPolicyReasonCode | null {
   for (const re of ROOT_DELETE_RE) {
     if (re.test(cmd)) return REASON_ROOT_DELETE
   }
+  return null
+}
+
+/**
+ * 用户手动终端的判定口径（SEC-16-04）。
+ *
+ * 取舍（与 shell_exec 的三档模型有意不同，写在这里供走查）：
+ *  - deny 档硬拒：与 shell_exec 共享同一张 DENY_RULES + ROOT_DELETE_RE，SEC-16-05 补的
+ *    规则（dd/fsutil/vssadmin/wipefs…）在此自动生效，不需要终端另维护一份名单；
+ *  - 工作目录外路径（REASON_OUTSIDE：盘符绝对路径 + POSIX 系统目录白名单，含 ~ 展开）一并硬拒；
+ *  - 其余 confirm 档（删除/移动/kill 等危险特征）**放行**——用户手动终端没有审批 UI，
+ *    而用户本身就有能力打开系统终端（「用户即操作者」），弹审批没有意义，直接拦截
+ *    反而破坏合法使用。这与审计文档「终端复用 classifyCommand 完整判定」的差异点所在。
+ *
+ * 返回 null=放行；否则返回硬拒的稳定 reason code。
+ */
+export function classifyTerminalCommand(command: string, workspaceAbs: string): ToolPolicyReasonCode | null {
+  const deny = classifyDenyOnly(command)
+  if (deny) return deny
+  const verdict = classifyCommand(command, workspaceAbs)
+  // 只额外硬拒外部路径类；其余 confirm 原因（DANGEROUS_DELETE 等）放行，见上方取舍说明
+  if (verdict.decision !== 'allow' && verdict.reason === REASON_OUTSIDE) return verdict.reason
   return null
 }
 

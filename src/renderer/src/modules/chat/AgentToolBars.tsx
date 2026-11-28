@@ -265,7 +265,7 @@ export const AgentToolBars: React.FC<{ tools: AgentToolConfigs; onOpenPolicy?: (
             <button
               className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
               title={t('agent.calendar.removeTip')}
-              onClick={() => void patchCalConfig({ paths: calConfig.paths.filter((x) => x !== p) })}
+              onClick={() => void patchCalConfig({ removePaths: [p] })}
             >
               ×
             </button>

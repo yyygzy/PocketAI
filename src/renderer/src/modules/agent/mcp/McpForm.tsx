@@ -49,13 +49,20 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
   const savedSecretCount =
     Object.keys(initial.env ?? {}).length + Object.keys(initial.headers ?? {}).length
 
+  // SEC-16-11：先取一次性令牌再 reveal（令牌消费一次即失效，防重放）；
+  // 主防线是主进程的审计留痕 + 冷却，这里只是把「一次点击 = 一次兑换」的语义带上。
   const handleRevealSecrets = async () => {
     if (!initial.id) {
       setError(t('agent.saveFirstThenReveal'))
       return
     }
     try {
-      const r = await window.pocketai.revealMcpSecrets(initial.id)
+      const tok = await window.pocketai.requestMcpRevealToken()
+      if (!tok.ok || !tok.token) {
+        setError(tok.error || t('common.unknownError'))
+        return
+      }
+      const r = await window.pocketai.revealMcpSecrets(initial.id, tok.token)
       if (!r.ok) {
         setError(r.error || t('common.unknownError'))
         return
@@ -67,6 +74,19 @@ export const McpForm: React.FC<Props> = ({ initial, onCancel, onSaved }) => {
       setError(errText(e))
     }
   }
+
+  // SEC-16-11：明文揭示 30s 后自动清除（沿用 clipboard-guard 的 TTL 思路）——
+  // env/headers 明文在表单里逗留越久，被旁观者/截图/后续误操作带走的面越大
+  useEffect(() => {
+    if (!secretsRevealed) return
+    const timer = setTimeout(() => {
+      setEnvText(JSON.stringify(initial.env ?? {}, null, 2))
+      setHeadersText(JSON.stringify(initial.headers ?? {}, null, 2))
+      setSecretsRevealed(false)
+    }, 30_000)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 回掩码以「打开表单时那份」为准，跟踪 initial 会让用户未保存的编辑被静默覆盖
+  }, [secretsRevealed])
 
   // Python 运行时列表（仅 runtime=python 时使用）
   const [pyRuntimes, setPyRuntimes] = useState<PythonRuntime[]>([])

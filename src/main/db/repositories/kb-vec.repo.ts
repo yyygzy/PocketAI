@@ -155,12 +155,17 @@ export const kbVecRepo = {
       const rowidPlaceholders = batch.map(() => '?').join(',')
       return db
         .prepare(
-          `SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
-           FROM (
+          // PERF-01：KNN 子查询必须 MATERIALIZED。此前把 vec 虚表放进 JOIN 的 FROM 里，
+          // SQLite 不物化它，vec 虚表被放到最内层逐行求值，KNN 实际执行 N 次而非 1 次
+          //（20k chunk 实测 27.5 分钟 → 64ms）。两处 `k = ?` 约束保留：sqlite-vec 0.1.9
+          // 对 KNN 子查询有「必须带 k = ?」的硬约束（见 :150-152 的历史注释）。
+          `WITH v AS MATERIALIZED (
              SELECT rowid, distance FROM ${vecTableName(dim)}
              WHERE embedding MATCH ? AND rowid IN (${rowidPlaceholders}) AND k = ?
              ORDER BY distance ASC
-           ) v
+           )
+           SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
+           FROM v
            JOIN ${MAP_TABLE} m ON m.vec_rowid = v.rowid AND m.dim = ?
            JOIN kb_chunks c ON c.id = m.chunk_id
            WHERE c.kb_id IN (${kbPlaceholders})

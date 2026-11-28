@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -48,6 +48,9 @@ const spawnMock = vi.mocked(spawn)
 
 beforeAll(() => {
   state.ws = mkdtempSync(path.join(tmpdir(), 'pocketai-auto-verify-'))
+  // SEC-16-01 起 vitest 改为直跑工作区的 vitest.mjs：摆一个入口文件供 existsSync 探测
+  mkdirSync(path.join(state.ws, 'node_modules', 'vitest'), { recursive: true })
+  writeFileSync(path.join(state.ws, 'node_modules', 'vitest', 'vitest.mjs'), '')
 })
 
 beforeEach(() => {

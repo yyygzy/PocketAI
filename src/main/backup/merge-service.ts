@@ -7,12 +7,19 @@
 // 合并策略：
 //   用户内容表（conversations/messages/notes/images/translations/
 //              translation_glossary/sandbox_files）：行级合并
-//   配置类表（assistants/providers/skills/mcp_servers/
-//            knowledge_bases/kb_documents/kb_chunks）：云端覆盖
+//   知识库表（knowledge_bases/kb_documents/kb_chunks）：行级合并（SEC-16-10）
+//   配置类表（assistants/providers/skills/mcp_servers）：云端覆盖
 //   仅追加表（security_events）：只补本机没有的 id，不覆盖本机既有记录
 //   本地保留表（app_config/field_keys/license_records/schema_migrations）：不动
 //
 // 冲突：同 id 两边都存在且内容/时间戳不同。用户可选 local/cloud/newer。
+//
+// SEC-16-10：kb_* 三张表原先走整表覆盖，(a) 本地独有文档直接丢失；(b) kb_vec_map 不在
+// 覆盖清单，覆盖后 chunk 表与向量映射错位（检索命中错位/漏召回）。改为行级合并后，在
+// 合并事务末尾做一次向量一致性收口（reconcileKbVecAfterMerge）：云端库的 vec 行不可搬运
+// （kb_vec_map.vec_rowid 只对云端自己的 kb_vec_<dim> 虚表有意义，rowid 空间/维度都可能
+// 对不上），所以按「宁可漏召回不可错召回」收敛——删失配/孤儿映射、统计需重建索引的
+// 文档数进摘要，重建走既有 reindexDocs 链路（数据健康面板的 missing-vec 探测）。
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -84,14 +91,24 @@ const ROW_MERGE_TABLES: Array<{ table: string; tsCol: string | null }> = [
   { table: 'images', tsCol: 'created_at' },
   { table: 'translations', tsCol: 'created_at' },
   { table: 'translation_glossary', tsCol: 'created_at' },
-  { table: 'sandbox_files', tsCol: 'created_at' }
+  { table: 'sandbox_files', tsCol: 'created_at' },
+  // 知识库三表（SEC-16-10，按 FK 依赖顺序排列：kb → doc → chunk）。
+  // 为什么 knowledge_bases 也必须离开覆盖清单：foreign_keys = ON 且 kb_documents/kb_chunks
+  // 对 knowledge_bases 声明了 ON DELETE CASCADE，覆盖清单里 DELETE FROM knowledge_bases
+  // 会级联清空两行合并保下来的本地文档/分块——三张表必须成组走行级合并，缺一不可。
+  // 时间戳列按表结构定：knowledge_bases/kb_chunks 只有 created_at；kb_documents 的
+  // updated_at 由 setStatus 维护（旧备份可能没有该列，mergeTable 交集后按「缺列 → 云端
+  // 时间戳为 0」保本地，不会误判）。
+  { table: 'knowledge_bases', tsCol: 'created_at' },
+  { table: 'kb_documents', tsCol: 'updated_at' },
+  { table: 'kb_chunks', tsCol: 'created_at' }
 ]
 
-/** 云端覆盖的配置类表 */
-const CLOUD_OVERWRITE_TABLES = [
-  'assistants', 'providers', 'skills', 'mcp_servers',
-  'knowledge_bases', 'kb_documents', 'kb_chunks'
-]
+/**
+ * 云端覆盖的配置类表：纯配置语义、无行级历史、无向量依赖
+ * （凭据列按 CREDENTIAL_COLUMNS 保留本机值）。知识库三表已移入 ROW_MERGE_TABLES（SEC-16-10）。
+ */
+const CLOUD_OVERWRITE_TABLES = ['assistants', 'providers', 'skills', 'mcp_servers']
 
 /**
  * 仅追加表（审计类）：跨机恢复只补齐另一台机器的记录，**不覆盖本机既有行**。
@@ -446,8 +463,9 @@ export function mergeTable(
   cloudDb: Database.Database,
   table: string,
   tsCol: string | null,
-  strategy: MergeStrategy
-): { inserted: number; updated: number; skipped: number } {
+  strategy: MergeStrategy,
+  opts: { trackTouched?: boolean } = {}
+): { inserted: number; updated: number; skipped: number; touchedIds?: string[] } {
   const cloudTbl = cloudDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)
   if (!cloudTbl) return { inserted: 0, updated: 0, skipped: 0 }
 
@@ -472,6 +490,9 @@ export function mergeTable(
   let inserted = 0
   let updated = 0
   let skipped = 0
+  // 被本合并写入（插入/更新）的行 id。调用方按需开启（目前只有 kb_chunks 用，
+  // 见 reconcileKbVecAfterMerge），避免 conversations 这类大表白白收集一份 id 列表。
+  const touchedIds = opts.trackTouched ? [] as string[] : undefined
 
   const tx = localDb.transaction(() => {
     for (const cloudRow of cloudRows) {
@@ -483,6 +504,7 @@ export function mergeTable(
         const vals = columns.map((c) => cloudRow[c] ?? null)
         insertStmt.run(...vals)
         inserted++
+        touchedIds?.push(id)
         continue
       }
 
@@ -515,6 +537,7 @@ export function mergeTable(
         const vals = columns.filter((c) => c !== 'id').map((c) => cloudRow[c] ?? null)
         updateStmt.run(...vals, id)
         updated++
+        touchedIds?.push(id)
       } else {
         skipped++
       }
@@ -522,7 +545,7 @@ export function mergeTable(
   })
 
   tx()
-  return { inserted, updated, skipped }
+  return touchedIds ? { inserted, updated, skipped, touchedIds } : { inserted, updated, skipped }
 }
 
 /** 仅追加合并（审计表）：只插入本机没有的 id，从不 UPDATE 本机既有行 */
@@ -626,8 +649,90 @@ export function overwriteConfigTables(
   return parts
 }
 
+// ─── KB 向量一致性收口（SEC-16-10）──────────────────────────────
+
 /**
- * 库内合并（第 1、2、3 步）：行级合并用户内容表 + 云端覆盖配置表 + 仅追加审计表，
+ * 删除一条 kb_vec_map 映射（连同它指向的 vec 虚表行）。
+ * 与 kb-health.cleanOrphans 同款容错形状：vec 扩展未加载 / 虚表不存在时，
+ * 残留的 vec 行只会漏召回不会错召回（检索路的 rowid 全部来自 kb_vec_map），
+ * 所以 vec 行删除失败不阻断，映射行照删。
+ */
+function dropKbVecMapRow(localDb: Database.Database, chunkId: string): boolean {
+  const row = localDb
+    .prepare('SELECT vec_rowid, dim FROM kb_vec_map WHERE chunk_id=?')
+    .get(chunkId) as { vec_rowid: number; dim: number } | undefined
+  if (!row) return false
+  // dim 会拼进虚表表名，只接受正整数（本地图的 dim 是自己写的，这里纯防御）
+  if (Number.isInteger(row.dim) && row.dim > 0) {
+    try {
+      localDb.prepare(`DELETE FROM kb_vec_${row.dim} WHERE rowid=?`).run(row.vec_rowid)
+    } catch { /* vec 虚表缺失/扩展未加载：见函数头注释，映射行照删 */ }
+  }
+  localDb.prepare('DELETE FROM kb_vec_map WHERE chunk_id=?').run(chunkId)
+  return true
+}
+
+/**
+ * 合并事务内的 KB 向量一致性收口（SEC-16-10）。
+ *
+ * kb_vec_map / kb_vec_<dim> 不随合并走：云端 map 的 vec_rowid 只对云端库自己的 vec 虚表
+ * 有意义（rowid 空间独立、维度可能不同、vec0 虚表行不可跨库复制），把云端映射行搬进本地
+ * 反而制造错召回。行级合并后按「宁可漏召回不可错召回」收敛为三步（必须在 runDbMergeTx
+ * 的外层事务里调用，任一步失败随整体回滚）：
+ *   1) 被合并触碰过的 chunk：若本地已有映射，其指向的本地向量对应的是旧内容 → 删映射；
+ *   2) 孤儿映射（chunk 已不存在：删文档历史泄漏 / 覆盖时代遗留）→ 删；
+ *   3) chunk 在而映射缺失（云端新合入的 chunk 带着嵌入 BLOB 但没有 vec 索引）：
+ *      不伪造向量，只统计受影响文档数进摘要——自动改 status='pending' 而不入队会让
+ *      task-scheduler 一小时后误标「索引超时」；数据健康面板既有的 missing-vec 探测
+ *      （kb-health.getKbIntegrityReport）会把它们列为需重建文档，用户显式触发 reindexDocs。
+ *
+ * kb_vec_map 不存在（从未写过向量）时无事可做，返回 null。
+ */
+export function reconcileKbVecAfterMerge(
+  localDb: Database.Database,
+  touchedChunkIds: ReadonlySet<string>
+): { removedMaps: number; docsNeedReindex: number } | null {
+  const hasMap = localDb
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='kb_vec_map'")
+    .get()
+  if (!hasMap) return null
+
+  let removedMaps = 0
+
+  // 1) 合并触碰过的 chunk：内容/嵌入已被云端版本改写，本地旧向量映射一律失效
+  for (const chunkId of touchedChunkIds) {
+    if (dropKbVecMapRow(localDb, chunkId)) removedMaps++
+  }
+
+  // 2) 孤儿映射：chunk 已不存在
+  const orphanIds = (
+    localDb
+      .prepare(
+        `SELECT m.chunk_id FROM kb_vec_map m
+         LEFT JOIN kb_chunks c ON c.id = m.chunk_id WHERE c.id IS NULL`
+      )
+      .all() as Array<{ chunk_id: string }>
+  ).map((r) => r.chunk_id)
+  for (const chunkId of orphanIds) {
+    if (dropKbVecMapRow(localDb, chunkId)) removedMaps++
+  }
+
+  // 3) 缺向量映射的文档数（有嵌入 BLOB 的 chunk 不在 map 里：JS 余弦兜底路仍可用，
+  //    vec 快路漏召回，待重建）
+  const docs = localDb
+    .prepare(
+      `SELECT COUNT(DISTINCT c.doc_id) AS n FROM kb_chunks c
+       WHERE c.embedding IS NOT NULL
+         AND c.id NOT IN (SELECT chunk_id FROM kb_vec_map)`
+    )
+    .get() as { n: number }
+
+  return { removedMaps, docsNeedReindex: Number(docs.n) || 0 }
+}
+
+/**
+ * 库内合并（第 1、2、3 步）：行级合并用户内容表（含知识库三表）+ 云端覆盖配置表
+ * + 仅追加审计表 + KB 向量一致性收口，
  * 整体包在一个外层事务里。任一表失败整体回滚，不再出现「报失败但已合并一半」的跨表不一致。
  * mergeTable/overwriteTable/appendOnlyTable 内部的 transaction 在嵌套时自动降级为 savepoint
  * （better-sqlite3 语义），单表粒度不变。附件下载是网络 IO，不在这里面。
@@ -639,10 +744,15 @@ export function runDbMergeTx(
   strategy: MergeStrategy
 ): string[] {
   const summaryParts: string[] = []
+  let touchedChunkIds: ReadonlySet<string> = new Set()
   const tx = localDb.transaction(() => {
-    // 1. 行级合并用户内容表
+    // 1. 行级合并用户内容表（含知识库三表，见 ROW_MERGE_TABLES 的 SEC-16-10 注释）
     for (const { table, tsCol } of ROW_MERGE_TABLES) {
-      const r = mergeTable(localDb, cloudDb, table, tsCol, strategy)
+      const r = mergeTable(
+        localDb, cloudDb, table, tsCol, strategy,
+        table === 'kb_chunks' ? { trackTouched: true } : {}
+      )
+      if (r.touchedIds) touchedChunkIds = new Set(r.touchedIds)
       if (r.inserted || r.updated) {
         summaryParts.push(`${table}: +${r.inserted} ~${r.updated}`)
       }
@@ -655,6 +765,18 @@ export function runDbMergeTx(
     for (const table of APPEND_ONLY_TABLES) {
       const n = appendOnlyTable(localDb, cloudDb, table)
       if (n > 0) summaryParts.push(`${table}: +${n}(仅追加)`)
+    }
+
+    // 4. KB 向量一致性收口（SEC-16-10）：kb_chunks 行合并后，chunk 表与 kb_vec_map 的
+    //    一致性必须在本事务内收口，任一步失败随整体回滚，不留半合并状态。
+    const rec = reconcileKbVecAfterMerge(localDb, touchedChunkIds)
+    if (rec) {
+      if (rec.removedMaps > 0) {
+        summaryParts.push(`kb向量映射: 清理 ${rec.removedMaps} 条失配/孤儿映射（防错召回）`)
+      }
+      if (rec.docsNeedReindex > 0) {
+        summaryParts.push(`知识库: ${rec.docsNeedReindex} 个文档需重建向量索引（数据健康面板可重建）`)
+      }
     }
   })
   tx()

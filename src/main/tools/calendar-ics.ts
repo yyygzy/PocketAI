@@ -5,12 +5,15 @@
 //  （国内场景日历多为本地时区导出，够用；跨时区日程以 Z 格式为准）
 // - RRULE 重复事件 v1 不展开（只返回原定时刻），STATUS:CANCELLED 跳过
 // - 配置存 app_config：agent.calendar_enabled / agent.calendar_ics_paths（JSON 数组）
+// - SEC-16-09：写入通道只收 AGENT_PICK_ICS_FILE 签发的 path token（resolveIcsPathTokens
+//   先把 token 解析回真实路径），渲染端无法再指定任意绝对路径让主进程读
 import fs from 'node:fs'
 import type { BuiltinTool } from './builtin'
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import { resolveSharedPathList, serializeSharedPath } from '../portable-paths'
-import type { CalendarConfig } from '../../shared/types'
+import { resolveSharedPathList, serializeSharedPath, resolveSharedPath } from '../portable-paths'
+import type { ApprovalPreviewField, CalendarConfig } from '../../shared/types'
 import { errMsg } from '../error'
+import { peekPathToken } from '../ipc/dialog-path-token'
 
 const KEY_ENABLED = 'agent.calendar_enabled'
 const KEY_PATHS = 'agent.calendar_ics_paths'
@@ -32,29 +35,103 @@ export function getCalendarConfig(): CalendarConfig {
   return { enabled: appConfigRepo.get(KEY_ENABLED) === '1', paths }
 }
 
-/** 保存配置（白名单校验：.ics 后缀 + 去重 + 上限） */
-export function setCalendarConfig(input: Partial<{ enabled: boolean; paths: string[] }>): CalendarConfig {
-  if (typeof input.enabled === 'boolean') {
-    appConfigRepo.set(KEY_ENABLED, input.enabled ? '1' : '0')
+/** 读库里的原始（序列化形式）路径清单；坏 JSON 当空清单 */
+function readStoredPaths(): string[] {
+  try {
+    const raw = appConfigRepo.get(KEY_PATHS)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : []
+  } catch {
+    return []
   }
-  if (Array.isArray(input.paths)) {
-    const seen = new Set<string>()
-    const cleaned: string[] = []
-    for (const p of input.paths) {
-      if (typeof p !== 'string') continue
-      const trimmed = p.trim()
-      if (!trimmed) continue
-      const stored = serializeSharedPath(trimmed) ?? trimmed
-      if (!/\.ics$/i.test(stored)) continue
-      const key = stored.toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      cleaned.push(stored)
-      if (cleaned.length >= MAX_PATHS) break
-    }
-    appConfigRepo.set(KEY_PATHS, JSON.stringify(cleaned))
+}
+
+/**
+ * SEC-16-09：把渲染端传来的 path token 解析回真实路径。
+ * 任何不是本进程签发的句柄（含裸绝对路径、过期/未知 token）都解析不出来——
+ * 这就是写入通道的闸门：渲染端只能引用「对话框刚选中过」的文件。
+ * peek 不消费，保存失败可整批重试；保存成功后由调用方 dropPathToken 一次性作废。
+ */
+export function resolveIcsPathTokens(tokens: unknown): { paths: string[]; unknownCount: number } {
+  const paths: string[] = []
+  let unknownCount = 0
+  for (const t of Array.isArray(tokens) ? tokens : []) {
+    const p = peekPathToken(typeof t === 'string' ? t : undefined)
+    if (p) paths.push(p)
+    else unknownCount++
+  }
+  return { paths, unknownCount }
+}
+
+/**
+ * 清洗待追加的候选路径（复用既有规则：.ics 后缀 + 序列化 + 去重 + 上限）。
+ * existing 传当前已存清单（序列化形式）：新增去重要连旧值一起比对，否则同一文件
+ * 逐次「添加」会以不同的存储形式混进清单。
+ */
+export function cleanIcsCandidates(candidates: unknown[], existing: string[]): string[] {
+  const seen = new Set(existing.map((p) => p.toLowerCase()))
+  const cleaned: string[] = []
+  for (const p of candidates) {
+    if (typeof p !== 'string') continue
+    const trimmed = p.trim()
+    if (!trimmed) continue
+    const stored = serializeSharedPath(trimmed) ?? trimmed
+    if (!/\.ics$/i.test(stored)) continue
+    const key = stored.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    cleaned.push(stored)
+    if (cleaned.length >= MAX_PATHS) break
+  }
+  return cleaned
+}
+
+/**
+ * 保存配置（SEC-16-09 后的写入面：addPaths/removePaths 均为**主进程解析出的绝对路径**，
+ * 不再整表替换——渲染端只持有 token，无法把已存路径原样传回，所以追加/移除各自成patch）。
+ */
+export function setCalendarConfig(patch: {
+  enabled?: boolean
+  addPaths?: string[]
+  removePaths?: string[]
+}): CalendarConfig {
+  if (typeof patch.enabled === 'boolean') {
+    appConfigRepo.set(KEY_ENABLED, patch.enabled ? '1' : '0')
+  }
+  const stored = readStoredPaths()
+  if (Array.isArray(patch.addPaths) && patch.addPaths.length > 0) {
+    const added = cleanIcsCandidates(patch.addPaths, stored)
+    if (added.length > 0) appConfigRepo.set(KEY_PATHS, JSON.stringify([...stored, ...added]))
+  }
+  if (Array.isArray(patch.removePaths) && patch.removePaths.length > 0) {
+    // 移除按解析后的绝对路径比对（Windows 不分大小写）：渲染端拿到的就是回读的绝对路径
+    const doomed = new Set(
+      patch.removePaths
+        .filter((p): p is string => typeof p === 'string')
+        .map((p) => (resolveSharedPath(p) ?? p).toLowerCase())
+    )
+    const kept = stored.filter((s) => !doomed.has((resolveSharedPath(s) ?? s).toLowerCase()))
+    if (kept.length !== stored.length) appConfigRepo.set(KEY_PATHS, JSON.stringify(kept))
   }
   return getCalendarConfig()
+}
+
+/**
+ * SEC-16-09 审批披露：calendar_read 审批弹窗补上「实际会读哪些文件」。
+ * 参数里只有 range，读取面在主进程配置里，通用启发式（buildToolPreviewFields）看不到；
+ * 引擎 buildApprovalDisplay 沿用 fs_write/project_create 的专用 builder 模式在这里接线。
+ */
+export function buildCalendarApprovalPreview(cfg: CalendarConfig = getCalendarConfig()): {
+  fields: ApprovalPreviewField[]
+} {
+  // 只展示文件名（读全路径对用户判断「会读什么」没有增益，还把目录结构摊给旁观者）
+  const names = cfg.paths.map((p) => p.split(/[\\/]/).filter(Boolean).pop() || p)
+  const shown = names.slice(0, 8).join('、')
+  const value =
+    names.length === 0
+      ? '（清单为空，本次不会读取任何文件）'
+      : `${names.length} 个：${shown}${names.length > 8 ? ' 等' : ''}`
+  return { fields: [{ key: 'calendar_files', value }] }
 }
 
 // ---------- .ics 解析 ----------

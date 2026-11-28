@@ -1610,6 +1610,84 @@ const MIGRATIONS: Migration[] = [
           ON import_result_audits(kind, created_at DESC);
       `)
     }
+  },
+  {
+    // v83: messages 补 `(conversation_id, created_at)` 复合索引（PERF-04）。
+    //
+    // 为什么非加不可：messages 现有三张索引（idx_messages_created_at / idx_messages_starred /
+    // idx_messages_pinned(conversation_id, pinned)）都同时服务不了
+    // `WHERE conversation_id=? ORDER BY created_at` —— listByConversation / last_preview 相关子查询
+    // （conversations 列表每行一次 `ORDER BY created_at DESC LIMIT 1`）全走 TEMP B-TREE 排序。
+    // 与 v49 给 agent_traces 加复合索引时记下的结论同构：收益的自变量是「单个会话有多少行」，
+    // 长会话是这个表的常态。消息列表与会话列表都是每次进入界面必触发的读路径。
+    //
+    // 写侧代价参照 v49 的量法（agent_traces 50,000 行 0.084 → 0.189 ms/行）：
+    // messages 的写入频率远低于 agent_traces（每条消息一次 vs 每步编排一次），代价可忽略。
+    version: 83,
+    name: 'messages_conv_created_index',
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at);
+    `
+  },
+  {
+    // v84: kb_chunks 的两张 FTS5 同步触发器改按 rowid 精确命中（PERF-05）。
+    //
+    // 现状：v18/v79 的 DELETE 触发器按 `chunk_id = old.id` 删，而 chunk_id 在 FTS5 表里是
+    // UNINDEXED 列（:427/:1507），条件无法走索引 —— 每删一行 chunk 就扫一遍整张 FTS 表，
+    // 且 kb_chunks 挂了两张 FTS 表（trigram + unicode61），扫描量翻倍。实测 1 万 chunk
+    // 删除耗时 82 秒；删除触发于重建索引 / 删文档 / 清库等常规操作。
+    //
+    // 改法：INSERT/UPDATE 显式绑定 rowid（`new.rowid`，触发器内引用 rowid 已在
+    // better-sqlite3-multiple-ciphers 上实测可用），DELETE/UPDATE-删按 `rowid = old.rowid`
+    // O(log n) 命中。存量 FTS 行的 rowid 是自动分配的、与源表无对应，所以必须整表重灌。
+    // 触发器内引用 rowid 的前提（kb_chunks 主键是 id TEXT，无 INTEGER PRIMARY KEY 别名）
+    // 与「按 rowid 删除」的语义都以真实库验证过；万一未来 SQLite 行为变化导致建触发器失败，
+    // 迁移会在启动时显式报错而不是静默丢同步。
+    version: 84,
+    name: 'kb_chunks_fts_rowid_triggers',
+    up: `
+      DROP TRIGGER IF EXISTS kb_chunks_ai;
+      DROP TRIGGER IF EXISTS kb_chunks_ad;
+      DROP TRIGGER IF EXISTS kb_chunks_au;
+      DROP TRIGGER IF EXISTS kb_chunks_short_ai;
+      DROP TRIGGER IF EXISTS kb_chunks_short_ad;
+      DROP TRIGGER IF EXISTS kb_chunks_short_au;
+
+      -- 存量 FTS 行的 rowid 与源表无对应，整表重灌（trigram 原文；unicode61 走 cjk_spaced 展开）
+      DELETE FROM kb_chunks_fts;
+      INSERT INTO kb_chunks_fts(rowid, content, doc_id, kb_id, chunk_id)
+        SELECT rowid, content, doc_id, kb_id, id FROM kb_chunks;
+
+      DELETE FROM kb_chunks_fts_short;
+      INSERT INTO kb_chunks_fts_short(rowid, content, doc_id, kb_id, chunk_id)
+        SELECT rowid, cjk_spaced(content), doc_id, kb_id, id FROM kb_chunks;
+
+      CREATE TRIGGER kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
+        INSERT INTO kb_chunks_fts(rowid, content, doc_id, kb_id, chunk_id)
+          VALUES (new.rowid, new.content, new.doc_id, new.kb_id, new.id);
+      END;
+      CREATE TRIGGER kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts WHERE rowid = old.rowid;
+      END;
+      CREATE TRIGGER kb_chunks_au AFTER UPDATE OF content ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts WHERE rowid = old.rowid;
+        INSERT INTO kb_chunks_fts(rowid, content, doc_id, kb_id, chunk_id)
+          VALUES (new.rowid, new.content, new.doc_id, new.kb_id, new.id);
+      END;
+
+      CREATE TRIGGER kb_chunks_short_ai AFTER INSERT ON kb_chunks BEGIN
+        INSERT INTO kb_chunks_fts_short(rowid, content, doc_id, kb_id, chunk_id)
+          VALUES (new.rowid, cjk_spaced(new.content), new.doc_id, new.kb_id, new.id);
+      END;
+      CREATE TRIGGER kb_chunks_short_ad AFTER DELETE ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts_short WHERE rowid = old.rowid;
+      END;
+      CREATE TRIGGER kb_chunks_short_au AFTER UPDATE OF content ON kb_chunks BEGIN
+        DELETE FROM kb_chunks_fts_short WHERE rowid = old.rowid;
+        INSERT INTO kb_chunks_fts_short(rowid, content, doc_id, kb_id, chunk_id)
+          VALUES (new.rowid, cjk_spaced(new.content), new.doc_id, new.kb_id, new.id);
+      END;
+    `
   }
 ]
 

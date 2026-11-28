@@ -9,6 +9,8 @@
 //  - 120s 上限（与 shell.exec 同口径），超时杀整个进程树；
 //  - 默认跑用户项目自己的测试（打包后产品自身 tests/ 不存在，故不跑产品自测）。
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 import type { BuiltinTool } from './builtin'
 import { resolveWorkspacePath } from './fs-tools'
 
@@ -24,6 +26,14 @@ interface RunTestsArgs {
   timeoutMs?: unknown
 }
 
+// 测试文件路径白名单（SEC-16-01 纵深防御）：
+//  - 字符集不含空格与 cmd 元字符（& | < > ^ % ! " ' ( )）——执行侧已改为直跑 Node（元字符 inert），
+//    白名单兜底防未来有人改回经 shell 的执行方式；允许中文文件名（\u4e00-\u9fa5）
+//  - 必须是 .test. / .spec. 后缀的测试文件（vitest 的 files 是过滤器，收敛成测试文件语义，
+//    不支持目录/任意路径用法——目录过滤如需支持须另加白名单校验，不得放宽为任意路径）
+const TEST_PATH_RE = /^[\w@.\-/\u4e00-\u9fa5]+$/
+const TEST_FILE_RE = /\.(test|spec)\.[cm]?[jt]sx?$/
+
 function parseFiles(raw: unknown): string[] {
   if (raw === undefined || raw === null) return []
   if (!Array.isArray(raw)) throw new Error('files 必须是字符串数组')
@@ -34,6 +44,9 @@ function parseFiles(raw: unknown): string[] {
     if (s.length > MAX_FILE_CHARS) throw new Error('测试文件路径过长')
     if (s.startsWith('/') || /^[A-Za-z]:/.test(s) || s.includes('..')) {
       throw new Error('测试文件路径必须是工作目录内的相对路径')
+    }
+    if (!TEST_PATH_RE.test(s) || !TEST_FILE_RE.test(s)) {
+      throw new Error('测试文件路径非法：只允许形如 tests/foo.test.ts 的相对路径')
     }
     return s
   })
@@ -71,7 +84,7 @@ const runTestsTool: BuiltinTool = {
     id: 'run_tests',
     name: 'run_tests',
     description:
-      '在 Agent 工作目录里跑 vitest 测试（只读、不改文件，无需确认）。参数：files（可选，相对工作目录的测试文件路径数组；留空则跑全部）、timeoutMs（可选，10000-120000）。返回退出码与 Test Files / Tests 摘要。改完代码后用它验证。',
+      '在 Agent 工作目录里跑 vitest 测试（只读、不改文件，无需确认）。参数：files（可选，相对工作目录的测试文件路径数组，只允许 .test./.spec. 后缀，不支持目录；留空则跑全部）、timeoutMs（可选，10000-120000）。要求工作区已安装 vitest。返回退出码与 Test Files / Tests 摘要。改完代码后用它验证。',
     parameters: {
       type: 'object',
       properties: {
@@ -92,17 +105,28 @@ const runTestsTool: BuiltinTool = {
     timeout = Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, timeout))
 
     const cwdAbs = resolveWorkspacePath('.') // 工作目录守卫（未设置会抛）
-    const vitestArgs = ['vitest', 'run', ...files, '--reporter=dot']
-    // Windows 下 npx 是 .cmd 批处理，spawn 必须经 cmd.exe（直接 spawn npx.cmd 会 EINVAL）；
-    // 与 shell-tools 的 runCommand 同口径。POSIX 直接 spawn npx。
-    const [cmd, spawnArgs] = process.platform === 'win32'
-      ? ['cmd.exe' as string, ['/d', '/s', '/c', 'npx', ...vitestArgs] as string[]]
-      : ['npx' as string, vitestArgs as string[]]
-    const child = spawn(cmd, spawnArgs, {
-      cwd: cwdAbs,
-      windowsHide: true,
-      detached: process.platform !== 'win32'
-    })
+    // SEC-16-01：不再经 cmd.exe / npx 执行——模型提供的 files 参数曾可拼进 cmd 命令行，
+    // 无空格的 & | > 会被 cmd 当分隔符/重定向（已实测复现）。改为以 Node 模式直跑 vitest 的
+    // mjs 入口：路径作为独立 argv 传递，元字符永远 inert。
+    // 注意两点：① 打包后 process.execPath 是 Electron 二进制，必须 ELECTRON_RUN_AS_NODE=1
+    // 才是 Node；② 直跑入口没有 npx 的自动下载能力，要求 vitest 已安装在工作区。
+    const vitestEntry = path.join(cwdAbs, 'node_modules', 'vitest', 'vitest.mjs')
+    if (!fs.existsSync(vitestEntry)) {
+      return JSON.stringify({
+        ok: false,
+        error: '工作区未安装 vitest（未找到 node_modules/vitest/vitest.mjs）。请先在项目里安装 vitest 再跑测试。'
+      })
+    }
+    const child = spawn(
+      process.execPath,
+      [vitestEntry, 'run', ...files, '--reporter=dot'],
+      {
+        cwd: cwdAbs,
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      }
+    )
 
     return await new Promise<string>((resolve) => {
       let out = ''

@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import type { Components } from 'react-markdown'
 import type { PluggableList } from 'unified'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -55,6 +56,76 @@ function extractCodeBlock(
 
 const PRE_CLASS =
   'rounded-lg p-3 overflow-x-auto text-[13px] bg-[var(--hljs-bg)] text-[var(--hljs-text)]'
+
+// PERF-03：不依赖运行时状态的 plugins / components 全部提升为模块级常量。
+// react-markdown 的 options 引用一变就全量重解析并卸载重挂整棵子树（CodeBlock 的
+// 折叠态被重置、MermaidBlock 反复 mermaid.render），每次渲染新建字面量不可接受。
+const PRE_PLAIN: React.FC<{ children?: React.ReactNode }> = ({ children }) => (
+  <pre className={`${PRE_CLASS} my-2`}>{children}</pre>
+)
+
+/** 围栏代码块 pre（codeCopy=true）：mermaid 代码块拦给 MermaidBlock，其余走 CodeBlock（复制按钮 + 折叠）；
+ *  解析结构里拿不到代码块（如 pre 直接裹裸文本）时退回纯 pre */
+const PRE_WITH_COPY: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+  const block = extractCodeBlock(children)
+  if (block?.lang === 'mermaid') {
+    return <MermaidBlock code={block.code} />
+  }
+  if (!block) return <PRE_PLAIN>{children}</PRE_PLAIN>
+  return <CodeBlock block={block}>{children}</CodeBlock>
+}
+
+const BASE_COMPONENTS: Components = {
+  a: ({ node, href, children, ...props }) => {
+    // 非白名单协议：渲染为无 href 的纯文本样式锚点，不可点击
+    if (!href || !SAFE_NAV_HREF.test(href)) {
+      return <a {...props} className="text-[var(--color-accent)] underline">{children}</a>
+    }
+    return (
+      <a {...props} href={href} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline">
+        {children}
+      </a>
+    )
+  },
+  img: ({ node, src, alt, ...props }) => {
+    if (!src || !SAFE_IMG_SRC.test(src)) return null
+    return <img {...props} src={src} alt={alt ?? ''} className="max-w-full rounded-lg my-2" />
+  },
+  pre: PRE_WITH_COPY,
+  code: ({ className, children, ...props }) => (
+    <code className={`${className ?? ''} font-mono`} {...props}>
+      {children}
+    </code>
+  ),
+  table: ({ children }) => (
+    <div className="overflow-x-auto my-2">
+      <table className="border-collapse text-[13px]">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border border-[var(--color-border)] px-2 py-1 bg-[var(--color-hover-overlay)]">{children}</th>
+  ),
+  td: ({ children }) => (
+    <td className="border border-[var(--color-border)] px-2 py-1">{children}</td>
+  )
+}
+
+/** 静态导出（codeCopy=false）：不挂 CodeBlock，纯 pre 展示 */
+const BASE_COMPONENTS_NO_COPY: Components = {
+  ...BASE_COMPONENTS,
+  pre: PRE_PLAIN
+}
+
+// PERF-02：关掉 highlightAuto 的 37 语言嗅探（实测慢 18 倍）；
+// detect:false 下无语言标注的围栏块由 rehype-highlight 直接跳过 → 纯文本展示（不报错）。
+// 注意 ignoreMissing 不是 v7 的有效选项（已移除；未知语言默认降级为警告不抛错），不传。
+const HIGHLIGHT_OPTIONS = {
+  detect: false,
+  subset: ['ts', 'tsx', 'js', 'jsx', 'python', 'json', 'html', 'css', 'sql', 'sh', 'yaml', 'md']
+}
+const REHYPE_PLUGINS_BASE: PluggableList = [[rehypeHighlight, HIGHLIGHT_OPTIONS]]
+const REMARK_PLUGINS_BASE: PluggableList = [remarkGfm, remarkMath]
+const REMARK_PLUGINS_CITATIONS: PluggableList = [remarkGfm, remarkMath, remarkCitations]
 
 /** 围栏代码块：右上角「复制」按钮（含已复制反馈），按钮定位于包裹层，不随横向滚动移位；
  *  超过设置项阈值（默认 20 行，0 = 永不折叠）默认折叠，12 行预览 + 渐变遮罩 + 展开/收起条，
@@ -139,81 +210,48 @@ export const Markdown: React.FC<{
     }
   }, [katexReady])
 
-  const plugins = citationCount > 0 ? [remarkGfm, remarkMath, remarkCitations] : [remarkGfm, remarkMath]
-  const rehypePlugins: PluggableList = katexPlugin
-    ? [katexPlugin, [rehypeHighlight, { detect: true, ignoreMissing: true }]]
-    : [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
+  // PERF-03：rehype 插件按 katexReady 分桶缓存。katexPlugin 是模块级懒加载单例，
+  // 在 setKatexReady(true) 之前必然已就位，这里读它是刻意的（不进依赖数组）。
+  const rehypePlugins = useMemo<PluggableList>(() => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return katexReady && katexPlugin ? [katexPlugin, ...REHYPE_PLUGINS_BASE] : REHYPE_PLUGINS_BASE
+  }, [katexReady])
+
+  // PERF-03：sup 依赖 citationCount，按它分桶 useMemo；onCitation 走 ref——
+  // 父组件传内联回调也不动摇 components 引用（引用一变就整棵子树重挂）。
+  const onCitationRef = useRef(onCitation)
+  onCitationRef.current = onCitation
+  const components = useMemo<Components>(() => {
+    return {
+      ...(codeCopy ? BASE_COMPONENTS : BASE_COMPONENTS_NO_COPY),
+      sup: ({ node, children, ...props }) => {
+        // 知识库引用徽章（remarkCitations 产出）：hProperties['data-citation'] → properties.dataCitation
+        const dataProps = (node as unknown as { properties?: Record<string, unknown> }).properties
+        const raw = dataProps?.dataCitation
+        const n = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN
+        if (!Number.isFinite(n)) return <sup {...props}>{children}</sup>
+        const inRange = n >= 1 && n <= citationCount
+        const cls = inRange
+          ? 'kb-citation inline-flex items-center align-super mx-0.5 px-1 rounded border border-[var(--color-border)] text-[10px] leading-[1.4] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors'
+          : 'kb-citation inline-flex items-center align-super mx-0.5 px-1 rounded border border-[var(--color-border)] text-[10px] leading-[1.4] text-[var(--color-text-muted)]'
+        if (inRange && onCitationRef.current) {
+          return (
+            <button type="button" className={`${cls} cursor-pointer`} onClick={() => onCitationRef.current?.(n)}>
+              [{n}]
+            </button>
+          )
+        }
+        return <span className={cls}>[{n}]</span>
+      }
+    }
+  }, [codeCopy, citationCount])
   return (
     <div className="markdown-body text-[var(--chat-font-size)] leading-relaxed">
       <ReactMarkdown
         urlTransform={safeUrlTransform}
-        remarkPlugins={plugins}
+        remarkPlugins={citationCount > 0 ? REMARK_PLUGINS_CITATIONS : REMARK_PLUGINS_BASE}
         rehypePlugins={rehypePlugins}
-        components={{
-          sup: ({ node, children, ...props }) => {
-            // 知识库引用徽章（remarkCitations 产出）：hProperties['data-citation'] → properties.dataCitation
-            const dataProps = (node as unknown as { properties?: Record<string, unknown> }).properties
-            const raw = dataProps?.dataCitation
-            const n = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN
-            if (!Number.isFinite(n)) return <sup {...props}>{children}</sup>
-            const inRange = n >= 1 && n <= citationCount
-            const cls = inRange
-              ? 'kb-citation inline-flex items-center align-super mx-0.5 px-1 rounded border border-[var(--color-border)] text-[10px] leading-[1.4] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors'
-              : 'kb-citation inline-flex items-center align-super mx-0.5 px-1 rounded border border-[var(--color-border)] text-[10px] leading-[1.4] text-[var(--color-text-muted)]'
-            if (inRange && onCitation) {
-              return (
-                <button type="button" className={`${cls} cursor-pointer`} onClick={() => onCitation(n)}>
-                  [{n}]
-                </button>
-              )
-            }
-            return <span className={cls}>[{n}]</span>
-          },
-          a: ({ node, href, children, ...props }) => {
-            // 非白名单协议：渲染为无 href 的纯文本样式锚点，不可点击
-            if (!href || !SAFE_NAV_HREF.test(href)) {
-              return <a {...props} className="text-[var(--color-accent)] underline">{children}</a>
-            }
-            return (
-              <a {...props} href={href} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline">
-                {children}
-              </a>
-            )
-          },
-          img: ({ node, src, alt, ...props }) => {
-            if (!src || !SAFE_IMG_SRC.test(src)) return null
-            return <img {...props} src={src} alt={alt ?? ''} className="max-w-full rounded-lg my-2" />
-          },
-          pre: ({ children }) => {
-            // 在解析结构层（而非渲染后 HTML 正则）拦截 mermaid 代码块 → SVG 图表
-            const block = extractCodeBlock(children)
-            if (block?.lang === 'mermaid') {
-              return <MermaidBlock code={block.code} />
-            }
-            if (!codeCopy || !block) {
-              return (
-                <pre className={`${PRE_CLASS} my-2`}>{children}</pre>
-              )
-            }
-            return <CodeBlock block={block}>{children}</CodeBlock>
-          },
-          code: ({ className, children, ...props }) => (
-            <code className={`${className ?? ''} font-mono`} {...props}>
-              {children}
-            </code>
-          ),
-          table: ({ children }) => (
-            <div className="overflow-x-auto my-2">
-              <table className="border-collapse text-[13px]">{children}</table>
-            </div>
-          ),
-          th: ({ children }) => (
-            <th className="border border-[var(--color-border)] px-2 py-1 bg-[var(--color-hover-overlay)]">{children}</th>
-          ),
-          td: ({ children }) => (
-            <td className="border border-[var(--color-border)] px-2 py-1">{children}</td>
-          )
-        }}
+        components={components}
       >
         {content}
       </ReactMarkdown>

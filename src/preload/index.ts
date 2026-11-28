@@ -144,6 +144,8 @@ import type {
   ApprovalAuditWarnEvent,
   WebSearchConfig,
   CalendarConfig,
+  IcsFilePickResult,
+  CalendarConfigPatch,
   ChannelConfig,
   ChannelStatusEvent,
   ChannelType,
@@ -188,8 +190,11 @@ const api = {
   saveProvider: (record: ProviderRecord): Promise<ProviderRecord | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.PROVIDER_SAVE, record),
   /** 按需揭示单个 Provider 的真实密钥（listProviders 为掩码视图） */
-  revealProviderKeys: (id: string): Promise<{ ok: boolean; apiKeys: string[] }> =>
-    ipcRenderer.invoke(IPC.PROVIDER_REVEAL_KEYS, id),
+  /** SEC-16-11：先 requestProviderRevealToken 取一次性令牌，再带令牌揭示 */
+  requestProviderRevealToken: (): Promise<{ ok: boolean; token?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.PROVIDER_REQUEST_REVEAL_TOKEN),
+  revealProviderKeys: (id: string, token: string): Promise<{ ok: boolean; apiKeys: string[]; error?: string }> =>
+    ipcRenderer.invoke(IPC.PROVIDER_REVEAL_KEYS, id, token),
   deleteProvider: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.PROVIDER_DELETE, id),
   fetchModels: (id: string): Promise<string[]> =>
@@ -844,10 +849,14 @@ const api = {
   getMcpServer: (id: string): Promise<McpServerRecord | null> =>
     ipcRenderer.invoke(IPC.MCP_SERVER_GET, id),
   /** 按需揭示单个 Server 的 env/headers 真实值（列表与表单默认为掩码视图） */
+  /** SEC-16-11：先 requestMcpRevealToken 取一次性令牌，再带令牌揭示 */
+  requestMcpRevealToken: (): Promise<{ ok: boolean; token?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.MCP_SERVER_REQUEST_REVEAL_TOKEN),
   revealMcpSecrets: (
-    id: string
+    id: string,
+    token: string
   ): Promise<{ ok: boolean; env?: Record<string, string>; headers?: Record<string, string>; error?: string }> =>
-    ipcRenderer.invoke(IPC.MCP_SERVER_REVEAL_SECRETS, id),
+    ipcRenderer.invoke(IPC.MCP_SERVER_REVEAL_SECRETS, id, token),
   saveMcpServer: (
     record: Partial<McpServerRecord> & { name: string }
   ): Promise<McpServerRecord | { ok: false; error: string }> => ipcRenderer.invoke(IPC.MCP_SERVER_SAVE, record),
@@ -1075,10 +1084,11 @@ const api = {
   // ---------- 本地日历配置（calendar.read） ----------
   getCalendarConfig: (): Promise<CalendarConfig> =>
     ipcRenderer.invoke(IPC.AGENT_GET_CALENDAR_CONFIG),
-  setCalendarConfig: (
-    patch: Partial<Pick<CalendarConfig, 'enabled' | 'paths'>>
-  ): Promise<CalendarConfig> => ipcRenderer.invoke(IPC.AGENT_SET_CALENDAR_CONFIG, patch),
-  pickIcsFile: (): Promise<{ canceled: boolean; path?: string }> =>
+  // SEC-16-09：paths 收 path token（pickIcsFile 签发），removePaths 收回读的绝对路径
+  setCalendarConfig: (patch: CalendarConfigPatch): Promise<CalendarConfig> =>
+    ipcRenderer.invoke(IPC.AGENT_SET_CALENDAR_CONFIG, patch),
+  // SEC-16-09：绝对路径不出主进程，只回一次性 token + 文件名
+  pickIcsFile: (): Promise<IcsFilePickResult> =>
     ipcRenderer.invoke(IPC.AGENT_PICK_ICS_FILE),
   /** 会话最近一次 Agent 运行统计（步数/耗时/token）；无记录返回 null */
   getLatestRunStats: (conversationId: string): Promise<AgentRunStats | null> =>

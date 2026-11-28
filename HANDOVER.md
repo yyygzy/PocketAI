@@ -28,6 +28,7 @@
 - `docs/v4-iteration-ledger.md`（V4 迭代台账，体量较大）
 - `docs/verify-checklist.md`（人工验收清单）
 - `docs/security-audit-ledger.md`（安全审计台账）
+- `docs/perf-security-audit-2026-11.md`（2026-11-27 性能与安全审计整改工作文档，SEC-Batch-16 来源）
 
 源码分层：
 

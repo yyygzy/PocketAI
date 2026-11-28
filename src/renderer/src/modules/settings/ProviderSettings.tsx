@@ -345,13 +345,20 @@ export const ProviderSettings: React.FC = () => {
   }
 
   // 用户显式点击才取回明文：单条查询，不改变「列表不落明文」的默认
+  // SEC-16-11：先取一次性令牌再 reveal（令牌消费一次即失效，防重放）；主防线是主进程的
+  // 审计留痕 + 冷却，这里只是把「一次点击 = 一次兑换」的语义带上。
   const handleRevealKeys = async () => {
     if (!editing?.id) {
       setNotice({ ok: false, text: t('provider.saveFirst') })
       return
     }
     try {
-      const r = await window.pocketai.revealProviderKeys(editing.id)
+      const tok = await window.pocketai.requestProviderRevealToken()
+      if (hasIpcFailed(tok) || !tok.token) {
+        setNotice({ ok: false, text: ipcFailText(tok, t('common.unknownError')) })
+        return
+      }
+      const r = await window.pocketai.revealProviderKeys(editing.id, tok.token)
       // 同一条合同：失败是 {ok:false}。旧写法会把失败当成"取到了空密钥"，
       // 结果是明文框显示为空并翻成"已显示"状态——**静默假成功**比报错更难查。
       if (hasIpcFailed(r)) {
@@ -364,6 +371,17 @@ export const ProviderSettings: React.FC = () => {
       setNotice({ ok: false, text: errText(e) })
     }
   }
+
+  // SEC-16-11：明文揭示 30s 后自动清除（沿用 clipboard-guard 的 TTL 思路）——
+  // 明文在输入框里逗留越久，被旁观者/截图/后续误操作带走的面越大
+  useEffect(() => {
+    if (!keysRevealed) return
+    const timer = setTimeout(() => {
+      setKeysText('')
+      setKeysRevealed(false)
+    }, 30_000)
+    return () => clearTimeout(timer)
+  }, [keysRevealed])
 
   const handleSave = async () => {
     if (!editing) return

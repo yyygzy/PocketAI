@@ -1178,6 +1178,8 @@ export const zh = {
   'agent.calendar.hintOff': '未启用：Agent 无法读取日程安排',
   'agent.calendar.hintNoFile': '已启用但未添加日历文件：点击「添加 .ics」选择文件',
   'agent.calendar.hintOn': 'Agent 可调用 calendar_read 查询日程（调用前需确认）',
+  'agent.calendar.added': '已添加日历文件：{name}',
+  'agent.calendar.addRejected': '未添加（重复或不是 .ics 文件）：{name}',
 
   // Channels（IM Bot 网关：Telegram/飞书/钉钉/Slack/Discord）
   'channel.tab': '🛰 Channels',
@@ -1317,6 +1319,7 @@ export const zh = {
   'agent.approval.field.apply_patch_stats': '各文件变更规模（~ 行数太多未逐行对齐，⋯ 显示被截断）',
   'agent.approval.field.apply_patch_diff': '补丁改动（- 当前内容，+ 改后内容）',
   'agent.approval.field.apply_patch_error': '补丁校验错误',
+  'agent.approval.field.calendar_files': '将读取的日历文件',
   'agent.approval.reason.GENERIC': '该操作需要你确认后执行。',
   'agent.approval.reason.REQUIRES_CONFIRM': '当前策略为「逐条确认」：每条命令都需你手动批准。',
   'agent.approval.reason.SHELL_DISABLED': '终端命令执行已关闭。',

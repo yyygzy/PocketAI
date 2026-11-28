@@ -1,7 +1,7 @@
 // Agent 工具开关配置：工作目录 / shell 策略 / 联网搜索 / 本地日历
 // 所有变更立即持久化，以后端回写为准（含值域兜底）
 import { useCallback, useEffect, useState } from 'react'
-import type { CalendarConfig, ShellConfig, WebSearchConfig } from '../../../../shared/types'
+import type { CalendarConfig, CalendarConfigPatch, ShellConfig, WebSearchConfig } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { useToast } from '../../components/ToastProvider'
 import { hasIpcFailed, ipcFailText, logIpcError } from '../../utils/ipc'
@@ -144,27 +144,39 @@ export function useAgentToolConfigs(enabled = true) {
     }
   }
 
-  const patchCalConfig = async (patch: Partial<Pick<CalendarConfig, 'enabled' | 'paths'>>) => {
+  // SEC-16-09：patch 现在是 {enabled?, paths?(token), removePaths?(绝对路径)}；
+  // 返回保存后的回读配置（null=失败），调用方据此给出「加了/没加上」的反馈
+  const patchCalConfig = async (patch: CalendarConfigPatch): Promise<CalendarConfig | null> => {
     try {
       const next = await window.pocketai.setCalendarConfig(patch)
       if (hasIpcFailed(next)) {
         toast.error(ipcFailText(next, t('common.unknownError')))
-        return
+        return null
       }
       markUnread('calendar', null)
       setCalConfigState(next)
+      return next
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
+      return null
     }
   }
 
-  /** 添加 .ics 日历文件（文件选择对话框） */
+  /** 添加 .ics 日历文件（文件选择对话框；SEC-16-09：只拿 token + 文件名，路径不出主进程） */
   const addIcs = async () => {
     try {
       const res = await window.pocketai.pickIcsFile()
-      if (res.canceled || !res.path) return
-      if (calConfig.paths.includes(res.path)) return
-      await patchCalConfig({ paths: [...calConfig.paths, res.path], enabled: true })
+      if (res.canceled || !res.token) return
+      const before = calConfig.paths.length
+      const next = await patchCalConfig({ paths: [res.token], enabled: true })
+      if (!next) return
+      // 渲染端拿不到绝对路径，无法像旧实现那样本地判重——用保存后的回读对照：
+      // 清单没变 ⇒ 主进程按「重复或非 .ics」丢弃了，拿 fileName 给用户一句交代
+      if (next.paths.length === before) {
+        toast.warning(t('agent.calendar.addRejected', { name: res.fileName ?? '' }))
+      } else {
+        toast.success(t('agent.calendar.added', { name: res.fileName ?? '' }))
+      }
     } catch (e) {
       toast.error(errText(e, t('common.unknownError')))
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatTarget } from '../../../../shared/types'
+import type { AgentChunkEvent, ChatTarget } from '../../../../shared/types'
 import type { CompareColumn } from './ComparisonColumns'
 import type { FocusBranch } from './ChatView'
 import type { AgentMessage, LiveStep } from '../../components/agent/agent-shared'
@@ -121,20 +121,88 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
   const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentFinalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ---- PERF-02：流式 chunk rAF 合批 ----
+  // chunk 每 token 一次 setLiveColumns/setAgentStream 会触发 React 全树提交（→ react-markdown
+  // 全量重解析 + 高亮），现在 delta 先进 ref 缓冲，requestAnimationFrame 每帧 flush 一次。
+  // 范式与 TranslateModule.tsx 的 onTranslateChunk 相同；两条流各一套（聊天按列、agent 按到达顺序）。
+  // 聊天列缓冲：targetIndex → 该列未落屏的 delta 串
+  const chatChunkBufRef = useRef<Map<number, string>>(new Map())
+  const chatRafRef = useRef<number | null>(null)
+  // agent 缓冲：按到达顺序保留原始 chunk（reducer 要逐条归并正文/reasoning），
+  // rid 用于 flush 时过滤跨请求残余
+  const agentChunkBufRef = useRef<Array<{ rid: string; ev: AgentChunkEvent }>>([])
+  const agentRafRef = useRef<number | null>(null)
+
+  /** 丢弃未 flush 的 chunk 缓冲并取消排程的帧：新一轮 begin / fail 时调用，防跨请求串字 */
+  const resetChunkBufs = useCallback(() => {
+    if (chatRafRef.current !== null) {
+      cancelAnimationFrame(chatRafRef.current)
+      chatRafRef.current = null
+    }
+    chatChunkBufRef.current = new Map()
+    if (agentRafRef.current !== null) {
+      cancelAnimationFrame(agentRafRef.current)
+      agentRafRef.current = null
+    }
+    agentChunkBufRef.current = []
+  }, [])
+
   // opts 存 ref，避免事件订阅 effect 因回调重建而反复重订阅（流式期间重订阅可能丢 chunk）
   const optsRef = useRef(opts)
   optsRef.current = opts
 
   // 订阅流式事件；订阅一次即可，回调内通过 optsRef 读最新的 loadMessages 等
   useEffect(() => {
-    const offChunk = window.pocketai.onChatChunk((e) => {
-      if (e.requestId !== requestIdRef.current) return
+    // 聊天列 flush：把各列缓冲的 delta 一次性追加进 liveColumns（同帧多列一次提交）
+    const flushChatChunks = () => {
+      if (chatRafRef.current !== null) {
+        cancelAnimationFrame(chatRafRef.current)
+        chatRafRef.current = null
+      }
+      const buf = chatChunkBufRef.current
+      if (buf.size === 0) return
+      chatChunkBufRef.current = new Map()
       setLiveColumns((prev) => {
         if (!prev) return prev
-        return prev.map((c, i) =>
-          i === e.targetIndex ? { ...c, content: c.content + e.delta } : c
-        )
+        let next = prev
+        buf.forEach((delta, idx) => {
+          next = next.map((c, i) => (i === idx ? { ...c, content: c.content + delta } : c))
+        })
+        return next
       })
+    }
+    // agent flush：缓冲期间已切新一轮的残余 chunk（rid 不匹配）直接丢弃，不串进新一轮的卡片
+    const flushAgentChunks = () => {
+      if (agentRafRef.current !== null) {
+        cancelAnimationFrame(agentRafRef.current)
+        agentRafRef.current = null
+      }
+      const buf = agentChunkBufRef.current
+      if (buf.length === 0) return
+      agentChunkBufRef.current = []
+      setAgentStream((prev) => {
+        if (!prev) return prev
+        let messages = prev.messages
+        let changed = false
+        for (const { rid, ev } of buf) {
+          if (rid !== prev.requestId) continue
+          messages = messagesReducer(messages, {
+            type: 'chunk',
+            messageId: ev.messageId,
+            delta: ev.delta,
+            reasoning: ev.reasoning
+          })
+          changed = true
+        }
+        return changed ? { ...prev, messages } : prev
+      })
+    }
+
+    const offChunk = window.pocketai.onChatChunk((e) => {
+      if (e.requestId !== requestIdRef.current) return
+      const buf = chatChunkBufRef.current
+      buf.set(e.targetIndex, (buf.get(e.targetIndex) ?? '') + e.delta)
+      if (chatRafRef.current === null) chatRafRef.current = requestAnimationFrame(flushChatChunks)
     })
 
     const markSettled = (_requestId: string, index: number, patch: Partial<CompareColumn>) => {
@@ -152,12 +220,17 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
 
     const offDone = window.pocketai.onChatDone((e) => {
       if (e.requestId !== requestIdRef.current) return
+      // 落定前先同步 flush 残余缓冲：rAF 排程的那一帧等不到了，不 flush 会丢最后一截文本
+      flushChatChunks()
       // 用户停止仍走 done 通道推部分内容，但事件带 status:'aborted'：
       // 记成 done 会让 settledOutcome 汇总出成功，误弹"回复已完成"并聚焦摘要。
       markSettled(e.requestId, e.targetIndex, { status: e.status === 'aborted' ? 'aborted' : 'done' })
     })
     const offError = window.pocketai.onChatError((e) => {
-      if (e.requestId === requestIdRef.current) markSettled(e.requestId, e.targetIndex, { status: 'error', error: e.error })
+      if (e.requestId === requestIdRef.current) {
+        flushChatChunks()
+        markSettled(e.requestId, e.targetIndex, { status: 'error', error: e.error })
+      }
     })
 
     // ---- Agent 模式事件流（v1：同一会话入口，只消费既有事件，不改引擎） ----
@@ -186,18 +259,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     })
     const offAgentChunk = window.pocketai.onAgentChunk((e) => {
       if (e.requestId !== requestIdRef.current) return
-      setAgentStream((prev) => {
-        if (!prev || prev.requestId !== e.requestId) return prev
-        return {
-          ...prev,
-          messages: messagesReducer(prev.messages, {
-            type: 'chunk',
-            messageId: e.messageId,
-            delta: e.delta,
-            reasoning: e.reasoning
-          })
-        }
-      })
+      agentChunkBufRef.current.push({ rid: e.requestId, ev: e })
+      if (agentRafRef.current === null) agentRafRef.current = requestAnimationFrame(flushAgentChunks)
     })
     function finalizeAgent(convId: string, outcome: 'done' | 'error') {
       if (finalizedRef.current) return
@@ -231,6 +294,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     }
     const offAgentDone = window.pocketai.onAgentDone((e) => {
       if (e.requestId !== requestIdRef.current) return
+      // agent done 前先同步 flush 残余 chunk 缓冲，否则最后一截正文丢失（rAF 那帧等不到了）
+      flushAgentChunks()
       optsRef.current.onAgentDoneMeta?.({
         conversationId: e.conversationId,
         usedTools: e.usedTools,
@@ -240,6 +305,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     })
     const offAgentError = window.pocketai.onAgentError((e) => {
       if (e.requestId !== requestIdRef.current) return
+      // 与 agent done 同理：错误卡追加前先把缓冲的正文 flush 掉（保持卡内文本完整）
+      flushAgentChunks()
       setAgentStream((prev) => {
         if (!prev || prev.requestId !== e.requestId) return prev
         // 引擎在发 error 前会先把当前占位 assistant 写入「（出错：…）／（已中止）」终态并作为 thought 步发出；
@@ -295,10 +362,11 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       offAgentChunk()
       offAgentDone()
       offAgentError()
+      resetChunkBufs()
       if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current)
       if (agentFinalizeTimerRef.current) clearTimeout(agentFinalizeTimerRef.current)
     }
-  }, [])
+  }, [resetChunkBufs])
 
   const isStreaming = useCallback(() => requestIdRef.current !== null, [])
   const getRequestId = useCallback(() => requestIdRef.current, [])
@@ -308,6 +376,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     // 取消上一轮尚未触发的 finalize timer：否则它 200ms 后会清掉本轮刚建好的 liveColumns
     if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null }
     if (agentFinalizeTimerRef.current) { clearTimeout(agentFinalizeTimerRef.current); agentFinalizeTimerRef.current = null }
+    // 丢弃上一轮残余的 chunk 缓冲：flush 若晚于新一轮 begin 会把旧文本串进新列（跨请求串字）
+    resetChunkBufs()
     const requestId = crypto.randomUUID()
     requestIdRef.current = requestId
     setStopUnread(null) // §266：新一轮流式，上一发"停止没送到"不再作数（陈旧谎报要自己退场，§256）
@@ -327,7 +397,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
       }))
     )
     return requestId
-  }, [])
+  }, [resetChunkBufs])
 
   /** Agent 模式：同一 requestId 认领，不建虚拟列；步骤由 agent 事件流归并成 AgentMessage 卡片 */
   const beginAgentStream = useCallback((convId: string): string | null => {
@@ -335,6 +405,8 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     // 同 beginStream：取消上一轮遗留的 finalize timer，避免它清掉本轮的 agentRunning/liveSteps
     if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null }
     if (agentFinalizeTimerRef.current) { clearTimeout(agentFinalizeTimerRef.current); agentFinalizeTimerRef.current = null }
+    // 同 beginStream：丢弃上一轮残余的 chunk 缓冲（flushAgentChunks 已按 rid 过滤，这里再兜底）
+    resetChunkBufs()
     const requestId = crypto.randomUUID()
     requestIdRef.current = requestId
     setStopUnread(null)
@@ -348,12 +420,14 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     setLiveSteps([])
     setAgentRunning(true)
     return requestId
-  }, [])
+  }, [resetChunkBufs])
 
   const failStream = useCallback((requestId: string, convId: string) => {
     if (requestIdRef.current !== requestId) return
     if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null }
     if (agentFinalizeTimerRef.current) { clearTimeout(agentFinalizeTimerRef.current); agentFinalizeTimerRef.current = null }
+    // IPC reject 兜底即本轮终结：残余缓冲无意义，清掉（连带取消排程的帧）
+    resetChunkBufs()
     requestIdRef.current = null
     streamingConvRef.current = null
     setLiveColumns(null)
@@ -361,7 +435,7 @@ export function useStreamSession(opts: UseStreamSessionOptions): UseStreamSessio
     setAgentRunning(false)
     setLiveSteps([])
     if (convId && optsRef.current.getCurrentConvId() === convId) optsRef.current.loadMessages(convId)
-  }, [])
+  }, [resetChunkBufs])
 
   const focusNewBranch = useCallback((turnKey: string, batchId: string) => {
     setFocusBranch({ turnKey, batchId, nonce: ++focusNonceRef.current })

@@ -72,12 +72,38 @@ export function rowToRecord(row: MessageRow): MessageRecord {
 }
 
 export const messageRepo = {
-  listByConversation(conversationId: string): MessageRecord[] {
-    const rows = dbService
-      .getHandle()
-      .prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC')
-      .all(conversationId) as MessageRow[]
-    return rows.map(rowToRecord)
+  /**
+   * 按会话取消息。不传 opts 时保持旧行为（全量、ASC）——现有调用方（engine 历史聚合、
+   * chat 上下文、导出）依赖全量语义。PERF-04：列表类调用方传 { limit } / { limit, beforeTs }
+   * 走游标分页（WHERE created_at < ? + DESC LIMIT 后反转为 ASC，避免 OFFSET 深分页），
+   * 命中 idx_messages_conv_created（database.ts v83）后排序不再走 TEMP B-TREE。
+   */
+  listByConversation(conversationId: string, opts?: { limit?: number; beforeTs?: number }): MessageRecord[] {
+    if (opts?.limit === undefined) {
+      const rows = dbService
+        .getHandle()
+        .prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC')
+        .all(conversationId) as MessageRow[]
+      return rows.map(rowToRecord)
+    }
+    const limit = Math.min(1000, Math.max(1, Math.floor(opts.limit)))
+    const rows = (
+      opts.beforeTs !== undefined
+        ? dbService
+            .getHandle()
+            .prepare(
+              'SELECT * FROM messages WHERE conversation_id=? AND created_at < ? ORDER BY created_at DESC, rowid DESC LIMIT ?'
+            )
+            .all(conversationId, opts.beforeTs, limit)
+        : dbService
+            .getHandle()
+            .prepare(
+              'SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?'
+            )
+            .all(conversationId, limit)
+    ) as MessageRow[]
+    // DESC 取「最近 N 条」，反转回 ASC 保持与全量路径相同的返回顺序契约
+    return rows.reverse().map(rowToRecord)
   },
 
   getById(id: string): MessageRecord | null {

@@ -3,8 +3,10 @@
 // 与 shell_exec 工具的区别：
 //  - shell_exec：Agent 驱动，一次性命令，需工作目录锚定 + confirm/allow 分类审批；
 //  - 本服务：用户自己操作（等价于系统终端），长生命周期交互式 shell 子进程，
-//    输出流式推送渲染端；安全上仅保留 deny 黑名单硬拒（classifyDenyOnly），
-//    因为用户本身就有能力打开系统终端，confirm 审批对「用户本人」无意义。
+//    输出流式推送渲染端；安全上硬拒 deny 档 + 工作目录外路径（classifyTerminalCommand），
+//    其余 confirm 档放行——用户本身就有能力打开系统终端（「用户即操作者」），
+//    终端里没有审批 UI，confirm 弹窗无意义。取舍细节见 shell-tools 的 classifyTerminalCommand 注释。
+//  - 每条命令（拦截的与已执行的）都写 security_events 留痕（SEC-16-04），锁屏时清空全部会话。
 //
 // 工作目录：旧的 `cwd: undefined` 注释写着「便携包根目录」，但代码并没有锚定到任何
 // 应用目录——实际落点取决于进程从哪里启动。现在按 resolveTerminalCwd 的优先级显式选定。
@@ -17,8 +19,11 @@ import { promisify } from 'node:util'
 import { app, type WebContents } from 'electron'
 import { IPC } from '../../shared/types'
 import { errMsg } from '../error'
-import { classifyDenyOnly } from '../tools/shell-tools'
+import { classifyTerminalCommand } from '../tools/shell-tools'
 import { getWorkspaceDir } from '../tools/fs-tools'
+import { capLogString } from '../security/log-redact'
+import { securityEventRepo, type SecurityEventKind } from '../db/repositories/security-event.repo'
+import { lockService } from '../lock/lock'
 import { APP_ROOT } from '../portable'
 import { createLogger } from '../logger'
 
@@ -127,16 +132,49 @@ export function startTerminal(wc: WebContents, requestedCwd?: string): { ok: tru
   return { ok: true, sessionId: ownerId, epoch, cwd }
 }
 
+/** 终端命令审计入库的单条上限（SEC-16-04）：先脱敏、再截断，防超长粘贴灌库 */
+const MAX_AUDIT_CMD_CHARS = 500
+
+/**
+ * 终端命令写入 security_events 留痕（SEC-16-04）。
+ *
+ * 为什么留：终端 IPC 此前无审批也无审计，渲染层一旦被注入（XSS/供应链投毒）就等于完整 shell，
+ * 出了事无从追溯。deny 拦截与已执行命令都记（kind 同为 terminal_command，拦截原因进 detail）。
+ *
+ * 脱敏与截断：命令文本可能携带内联凭据（curl -u user:pass 之类），走仓库既有的日志脱敏
+ * 工具 log-redact 同口径处理——那边没有针对自由文本的值脱敏函数（redactSecretsInText 不存在），
+ * 因此用其 capLogString 做「先截断」这一层；append 内部自带 fail-open（写失败只记日志不阻断），
+ * 审计不可用不能把用户卡在终端外。
+ *
+ * kind 的类型注记：securityEventRepo 的 SecurityEventKind 联合还没扩 terminal_command
+ * （repo 在本次改动分区外，禁改）；security_events 表的 kind 列是 TEXT 无 CHECK 约束，
+ * 运行时无碍，扩类型时把这里的双断言换掉即可。
+ */
+export function auditTerminalCommand(ownerId: number, raw: string, blocked: string | null): void {
+  const cmd = capLogString(String(raw ?? '').trim(), MAX_AUDIT_CMD_CHARS)
+  securityEventRepo.append({
+    kind: 'terminal_command' as unknown as SecurityEventKind,
+    message: blocked ? `终端命令被安全策略拦截（${blocked}）：${cmd}` : `终端命令：${cmd}`,
+    detail: { ownerId, blocked: blocked ?? null }
+  })
+}
+
 /** 向终端 stdin 写入一行（渲染端已附换行）；deny 黑名单命令直接拦截 */
 export function inputTerminal(ownerId: number, data: string): { ok: true } | { ok: false; error: string } {
   const s = sessions.get(ownerId)
   if (!s || !s.proc.stdin || s.proc.stdin.destroyed) {
     return { ok: false, error: '终端未运行' }
   }
-  // Ctrl+C（\x03）直接透传，不做命令判定
+  // Ctrl+C（\x03）直接透传，不做命令判定、不留痕（不是命令）
   if (data !== '\x03') {
-    const reason = classifyDenyOnly(data)
-    if (reason) return { ok: false, error: `命令被安全策略拦截（${reason}）` }
+    // 判定口径见 classifyTerminalCommand（shell-tools）：deny 档 + 工作目录外路径硬拒，
+    // 其余 confirm 档放行（用户即操作者，终端里没有审批 UI）
+    const reason = classifyTerminalCommand(data, getWorkspaceDir() || process.cwd())
+    if (reason) {
+      auditTerminalCommand(ownerId, data, reason)
+      return { ok: false, error: `命令被安全策略拦截（${reason}）` }
+    }
+    auditTerminalCommand(ownerId, data, null)
   }
   try {
     s.proc.stdin.write(data)
@@ -173,3 +211,19 @@ export function killTerminal(ownerId: number): void {
 export function killAllTerminals(): void {
   for (const id of [...sessions.keys()]) killTerminal(id)
 }
+
+// ── SEC-16-04：锁屏即清终端 ──
+// 锁定（手动 / 自动超时 / 系统睡眠 / 应用隐藏触发）时终止全部终端会话，对齐 lock/ipc-gate 的
+// fail-closed 口径：锁屏期间渲染层被注入也拿不到活 shell；锁屏期间终端 IPC 本身另有
+// APP_LOCKED 网关兜住（ipcMain.handle 包装，既有机制，此处不重复）。
+//
+// 已知边界（审计报告已记）：「应用隐藏但未开启自动锁屏」时 lockService 不会进入 locked 态
+// （onAppHidden 只在 autoLockTimeout>0 时排定时器），没有事件可订阅——要做到「隐藏即杀」
+// 需要改 lock.ts 或窗口 hide 钩子，均在本次改动分区之外。
+lockService.onStateChange((evt) => {
+  if (evt.state !== 'locked') return
+  const count = sessions.size
+  if (count === 0) return
+  killAllTerminals()
+  log.info('锁屏终止终端会话', { count })
+})

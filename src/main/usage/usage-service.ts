@@ -429,15 +429,56 @@ export function buildUsageDetailScope(
 }
 
 class UsageService {
+  /**
+   * PERF-06：sumCostSince 结果缓存。getBudgetStatus 在三处高频路径被调（渲染层 IPC 轮询、
+   * 每次编排前的硬阻断检查、usage 落库后的软预警），此前每次都全窗口取行 + 逐行 JSON.parse，
+   * 2 万条时单次 132 ms 且同步阻塞主进程。
+   * 缓存键 = 窗口起点；签名 = 数据指纹 + 价格表指纹，任一变化即重算：
+   *  - 数据指纹 = 窗口内行数 + 最大 rowid（INSERT 与 usage 回填 NULL→非 NULL 都会改变其一，
+   *    走 idx_messages_created_at / idx_usage_events_created 的索引范围扫，无 JSON 解析）
+   *  - 价格表指纹 = prices 的 JSON（用户改单价立即生效）
+   * 调用方只用固定两个窗口（今日 0 点 / 本月 1 号），Map 天然 ≤2 项，无需淘汰。
+   */
+  private costCache = new Map<number, { sig: string; value: number }>()
+
+  private usageDataFingerprint(sinceTs: number): string {
+    const db = dbService.getHandle()
+    const m = db
+      .prepare(
+        `SELECT COUNT(*) AS n, COALESCE(MAX(rowid),0) AS maxRowid FROM messages
+         WHERE role='assistant' AND status='done' AND usage IS NOT NULL AND created_at >= ?`
+      )
+      .get(sinceTs) as { n: number; maxRowid: number }
+    const e = db
+      .prepare('SELECT COUNT(*) AS n, COALESCE(MAX(rowid),0) AS maxRowid FROM usage_events WHERE created_at >= ?')
+      .get(sinceTs) as { n: number; maxRowid: number }
+    return `${m.n}/${m.maxRowid}/${e.n}/${e.maxRowid}`
+  }
+
   /** 汇总一批 usage 行的估算费用（预算/面板共用口径：消息仅 done + usage 非空；旁路事件按 kind 全计；未配置单价的模型计 0） */
   private sumCostSince(sinceTs: number, prices: Record<string, ModelPrice>): number {
+    const sig = `${this.usageDataFingerprint(sinceTs)}|${JSON.stringify(prices)}`
+    const hit = this.costCache.get(sinceTs)
+    if (hit && hit.sig === sig) return hit.value
+
+    const priceKeys = Object.keys(prices)
+    // SQL 侧预过滤：没配置单价的 (provider, model) 组合必然计 0，不必取回。
+    // 口径必须与下方 JS 侧 priceKey(row.provider || '(未知)', ...) 完全一致——
+    // JS 的 `||` 兜底把 NULL 和空串都归到 '(未知)'，SQL 侧用 CASE 对齐（COALESCE 只管 NULL）。
+    // 一条单价都没配时直接空扫（1=0），这是「从没配过价格」用户的常态路径。
+    const priceFilter = priceKeys.length
+      ? ` AND (CASE WHEN provider IS NULL OR provider='' THEN '(未知)' ELSE provider END)
+              || '::' ||
+            (CASE WHEN model IS NULL OR model='' THEN '(未知)' ELSE model END)
+              IN (${priceKeys.map(() => '?').join(',')})`
+      : ' AND 1=0'
     const rows = dbService
       .getHandle()
       .prepare(
         `SELECT provider, model, usage, created_at FROM messages
-         WHERE role='assistant' AND status='done' AND usage IS NOT NULL AND created_at >= ?`
+         WHERE role='assistant' AND status='done' AND usage IS NOT NULL AND created_at >= ?${priceFilter}`
       )
-      .all(sinceTs) as UsageRow[]
+      .all(sinceTs, ...priceKeys) as UsageRow[]
     let cost = 0
     for (const row of rows) {
       const u = parseUsageJson(row.usage)
@@ -451,7 +492,9 @@ class UsageService {
       const p = prices[priceKey(ev.provider || '(未知)', ev.model || '(未知)')]
       if (p) cost += computeUsageCost(u, p)
     }
-    return roundCost(cost)
+    const value = roundCost(cost)
+    this.costCache.set(sinceTs, { sig, value })
+    return value
   }
 
   /** 预算状态：今日（本地 0 点起）/ 本月（1 号起）估算费用 + 已配置预算（null=不限制） */

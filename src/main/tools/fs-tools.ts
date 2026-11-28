@@ -62,24 +62,19 @@ export function resolveWorkspacePath(relPath: string): string {
 
 /**
  * 校验目标路径经符号链接解析后仍落在工作目录内。
- * 策略：从目标向上找第一个存在的节点，realpath 它，与工作目录的 realpath 比较前缀。
- * 若目标路径上无任何存在节点（整条都是待创建的），则无法 follow symlink，放行。
+ *
+ * 策略（SEC-16-03 重写）：从目标路径向上逐段 `lstat`，任何一段是符号链接就用 `readlink`
+ * 解析其原始目标并校验落点——旧实现用 `fs.existsSync` 找「最深存在节点」，悬空链接
+ * （目标尚不存在）会返回 false 导致守卫放行，`writeFileSync` 跟随链接写到工作目录之外。
+ * `realpathSync` 对悬空链接会 ENOENT，所以必须用 `readlink` 取原始目标再手动 resolve。
+ *
+ * 两个边界必须保持：
+ *  - 回溯到工作目录根即终止：继续向上会在工作目录的祖先上误报——Windows 用户目录下的
+ *    junction 是合法的，祖先不是本守卫的管辖范围（原实现的「找到最深存在节点即停」语义）。
+ *  - 多级链接链（link → link2 → 外部）依赖逐段解析，`lstat` 的路径解析会自动跟随中间
+ *    分量上的符号链接，链式场景以验收用例实测为准，不能只靠推演。
  */
 export function assertWithinWorkspaceByRealpath(targetAbs: string, wsAbs: string): void {
-  let current = targetAbs
-  let existing: string | null = null
-  // 向上找第一个存在的节点（目录或文件）
-  while (true) {
-    if (fs.existsSync(current)) {
-      existing = current
-      break
-    }
-    const parent = path.dirname(current)
-    if (parent === current) break // 已到文件系统根，仍不存在
-    current = parent
-  }
-  if (!existing) return // 路径上无存在节点，无法构造 symlink 逃逸，放行
-
   let realWs: string
   try {
     realWs = fs.realpathSync(wsAbs)
@@ -88,15 +83,37 @@ export function assertWithinWorkspaceByRealpath(targetAbs: string, wsAbs: string
     // 让后续 fs 操作以 ENOENT 自然失败比在这里硬报错更可诊断
     return
   }
-  try {
-    const realExisting = fs.realpathSync(existing)
-    if (realExisting !== realWs && !realExisting.startsWith(realWs + path.sep)) {
-      throw new Error('路径超出工作目录范围（符号链接逃逸）')
+  let current = path.resolve(targetAbs)
+  while (current !== path.dirname(current)) {
+    // 已**到达**工作目录根：从根到目标的每一段都已验证为「非符号链接」或「指向目录内」，
+    // 再向上只会在工作目录的祖先上误报（可能是合法 junction），必须终止。
+    // 注意这里必须用全等（===）：用 startsWith 会让**目标路径自己**（永远在工作目录内）
+    // 一进循环就命中并 return，逐段 lstat 从未执行，守卫整体失效（回归测试锁死这一点）。
+    if (current === realWs) return
+    let st: fs.Stats
+    try {
+      st = fs.lstatSync(current)
+    } catch {
+      current = path.dirname(current)
+      continue
     }
-  } catch (e) {
-    // realpath 自身失败（权限/循环等）按越权处理，保守拒绝
-    if (errMsg(e).includes('超出工作目录')) throw e
-    throw new Error('路径校验失败')
+    if (st.isSymbolicLink()) {
+      let resolved: string
+      try {
+        resolved = path.resolve(path.dirname(current), fs.readlinkSync(current))
+      } catch (e) {
+        // readlink 自身失败（权限/循环等）按越权处理，保守拒绝——不知道链接指向哪里就不能放行
+        if (errMsg(e).includes('超出工作目录')) throw e
+        throw new Error('路径校验失败')
+      }
+      if (resolved !== realWs && !resolved.startsWith(realWs + path.sep)) {
+        throw new Error('路径超出工作目录范围（符号链接逃逸）')
+      }
+      // 链接目标落在工作目录内：跳到目标继续向上验证（目标自身也可能是链接）
+      current = resolved
+      continue
+    }
+    current = path.dirname(current)
   }
 }
 

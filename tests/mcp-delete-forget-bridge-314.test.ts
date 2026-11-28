@@ -33,6 +33,9 @@ const H = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  // SEC-16-07 后 secret-store 静态引 db/database → portable：portable 模块求值需要 app，
+  // 桩一个未打包形态让模块链纯本地求值（本测试本身不触达这些路径）
+  app: { isPackaged: false, getPath: () => process.cwd(), getAppPath: () => process.cwd() },
   ipcMain: {
     handle: (ch: string, fn: (e: unknown, ...a: unknown[]) => Promise<unknown>) => {
       H.handlers.set(ch, fn)

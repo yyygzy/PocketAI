@@ -17,9 +17,10 @@ import { randomBytes } from 'node:crypto'
 import type { EncryptionMode } from '../db/database'
 import { deriveKeySync, KDF_LEGACY, type KdfParams } from './index'
 
-// 固定密钥（无密码模式下字段加密用的弱混淆密钥）
-// 仅用于非敏感场景（config.json 等），不是真正的安全保障：
-// 派生输入（下方口令与盐）随源码公开，任何人可复现。
+// 固定密钥（SEC-16-08）：none 模式下字段加密用的**固定可复现**密钥，
+// 覆盖全部凭据（provider apiKeys / MCP env+headers / OAuth / 渠道 token / WebDAV 口令），
+// 仅提供混淆而非机密性——派生输入（下方口令与盐）随源码公开，
+// 任何拿到数据文件的人都能离线复现这把密钥并解出全部凭据。
 // 实现上用 deriveKeySync（scrypt）从固定口令 + 固定盐派生，
 // 避免源码里出现可直接使用的裸密钥字节；换口令/盐会使
 // 已落盘的字段密文与 WebDAV 密码密文全部失效，勿随意改动。

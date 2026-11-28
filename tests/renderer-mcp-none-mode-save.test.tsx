@@ -88,6 +88,7 @@ describe('McpForm 处理 none 模式闸门拒绝', () => {
     // 编辑既有记录：env 是掩码视图，用户把值改成真实新密钥
     stubPocketai({
       saveMcpServer: () => ({ ok: false, error: BLOCK_MSG }),
+      requestMcpRevealToken: () => ({ ok: true, token: 'test-token' }),
       revealMcpSecrets: () => ({ ok: true, env: { API_KEY: '••••cdef' }, headers: {} }),
       // 带 id 挂载时 usePythonEnv 会订阅安装事件（返回卸载函数）
       onPythonEnvEvent: () => () => {}

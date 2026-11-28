@@ -6,6 +6,8 @@
 //  - 验证失败不改工具成功状态：写入已经发生，把失败当工具失败会让模型误判需要重写文件；
 //  - 输出摘要而非全量日志，避免把 Agent 上下文撑爆。
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
 import { resolveWorkspacePath } from '../tools/fs-tools'
 import { errMsg } from '../error'
 
@@ -46,7 +48,8 @@ async function runCommand(
   cmd: string,
   args: string[],
   timeoutMs: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  env?: NodeJS.ProcessEnv
 ): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve) => {
     let out = ''
@@ -55,7 +58,8 @@ async function runCommand(
     const child = spawn(cmd, args, {
       cwd: resolveWorkspacePath('.'),
       windowsHide: true,
-      detached: process.platform !== 'win32'
+      detached: process.platform !== 'win32',
+      ...(env ? { env } : {})
     })
     const append = (chunk: Buffer): void => {
       if (out.length < MAX_OUTPUT_CHARS) {
@@ -87,6 +91,35 @@ async function runCommand(
       resolve({ ok: code === 0 && !timedOut && !aborted, exitCode: code, timedOut, aborted, output: out })
     })
   })
+}
+
+/**
+ * 以 Node 模式直跑工作区里的 vitest 入口（绕开 cmd.exe / npx，模型可控路径不进 shell 命令行）。
+ * 工作区未安装 vitest 时返回可读的跳过结果，不抛——验证失败不改工具成功状态。
+ */
+async function runVitestRelated(
+  vitestArgs: string[],
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<CommandResult> {
+  const skip: CommandResult = { ok: false, exitCode: null, timedOut: false, aborted: false, output: '' }
+  let entry: string
+  try {
+    entry = path.join(resolveWorkspacePath('.'), 'node_modules', 'vitest', 'vitest.mjs')
+  } catch {
+    return { ...skip, output: '未设置 Agent 工作目录，已跳过相关测试' }
+  }
+  if (!fs.existsSync(entry)) {
+    return { ...skip, output: '工作区未安装 vitest（未找到 node_modules/vitest/vitest.mjs），已跳过相关测试' }
+  }
+  return await runCommand(
+    process.execPath,
+    [entry, ...vitestArgs],
+    timeoutMs,
+    signal,
+    // 打包后 process.execPath 是 Electron 二进制，必须切 Node 模式才能跑 mjs 入口
+    { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+  )
 }
 
 function summaryLine(out: string): string {
@@ -138,9 +171,13 @@ export async function runPostEditValidation(changedPaths: string[], signal?: Abo
   if (paths.length === 0) return '[自动验证] 未识别到改动文件，已跳过'
 
   if (process.platform === 'win32') {
+    // typecheck 的 argv 是固定串（无模型输入），保留 cmd.exe 口径；
+    // vitest related 的文件路径来自模型写入回执（模型可控），不能进 cmd 命令行——
+    // 无空格的 & | > 会被 cmd 当分隔符/重定向（SEC-16-01 同族，已在 run_tests 实测复现）。
+    // 与 run_tests 同口径：以 Node 模式直跑 vitest 的 mjs 入口（ELECTRON_RUN_AS_NODE），
+    // 路径作为独立 argv 传递，元字符永远 inert。
     const typecheck = await runCommand('cmd.exe', ['/d', '/s', '/c', 'npm', 'run', 'typecheck'], TYPECHECK_TIMEOUT_MS, signal)
-    const relatedArgs = ['/d', '/s', '/c', 'npx', 'vitest', 'related', ...paths, '--run', '--reporter=dot']
-    const related = await runCommand('cmd.exe', relatedArgs, TEST_TIMEOUT_MS, signal)
+    const related = await runVitestRelated(['related', ...paths, '--run', '--reporter=dot'], TEST_TIMEOUT_MS, signal)
     const noTests = /No test files found|No test files were found/i.test(related.output)
     return [
       '[自动验证]',
@@ -152,7 +189,7 @@ export async function runPostEditValidation(changedPaths: string[], signal?: Abo
   }
 
   const typecheck = await runCommand('npm', ['run', 'typecheck'], TYPECHECK_TIMEOUT_MS, signal)
-  const related = await runCommand('npx', ['vitest', 'related', ...paths, '--run', '--reporter=dot'], TEST_TIMEOUT_MS, signal)
+  const related = await runVitestRelated(['related', ...paths, '--run', '--reporter=dot'], TEST_TIMEOUT_MS, signal)
   const noTests = /No test files found|No test files were found/i.test(related.output)
   return [
     '[自动验证]',

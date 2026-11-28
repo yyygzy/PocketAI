@@ -351,7 +351,9 @@ export async function createLocalBackup(outDir: string): Promise<{ path: string;
   mkdirSync(outDir, { recursive: true })
   const outPath = join(outDir, filename)
   // 备份包通常几十 MB：直接写会在磁盘满/中断时留下一个"看着像备份、解不开"的半份 zip
-  writeFileAtomicSync(outPath, zip)
+  // SEC-16-06：0600 最小权限落盘，与 createEncryptedLocalBackup 口径一致——
+  // 未加密包内是明文 app.db + 附件，不能让同机其他用户可读
+  writeFileAtomicSync(outPath, zip, { mode: 0o600 })
   log.info(`本地备份: ${outPath} (${zip.length} bytes)`)
   return { path: outPath, size: zip.length, encrypted: false }
 }

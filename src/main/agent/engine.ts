@@ -55,6 +55,7 @@ import type { ToolAgentContext, ToolClassification } from '../tools/builtin'
 import { getWorkspaceDir, resolveWorkspacePath, buildFsWritePreview } from '../tools/fs-tools'
 import { buildApplyPatchPreview } from '../tools/patch-tools'
 import { buildProjectApprovalPreview } from '../tools/project-tools'
+import { buildCalendarApprovalPreview } from '../tools/calendar-ics'
 import { findDangerRanges } from '../tools/shell-tools'
 import { buildToolPreviewFields } from '../../shared/tool-preview'
 import { injectAttachments, appendTextAttachments, buildImageParts } from '../chat/context-attachments'
@@ -1089,6 +1090,13 @@ function buildApprovalDisplay(
   if (tc.function.name === 'project_create') {
     const preview = buildProjectApprovalPreview(parsed)
     return { command: preview.command, risk: 'custom', reason: preview.reason, fields: preview.fields }
+  }
+
+  // calendar_read（SEC-16-09）：参数里只有 range，读取面（哪些 .ics）在主进程配置里，
+  // 通用启发式看不到 ⇒ 审批弹窗补上「将读取 N 个日历文件：…」。字段由 calendar-ics 的专用 builder 组装。
+  if (tc.function.name === 'calendar_read') {
+    const preview = buildCalendarApprovalPreview()
+    return { command: JSON.stringify(parsed), risk: 'custom', fields: preview.fields }
   }
 
   // MCP 工具：按参数名启发式生成语义化预览字段（路径解析复用工作目录守卫）

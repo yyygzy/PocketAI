@@ -3,21 +3,26 @@
 // 覆盖 src/main/tools/fs-tools.ts 的路径安全边界：
 // - getWorkspaceDir / setWorkspaceDir：工作目录读写
 // - resolveWorkspacePath：相对路径解析，拒绝 ../ 穿越 / NUL 注入 / 绝对路径越界
-// - assertWithinWorkspaceByRealpath：符号链接逃逸防护（realpath 校验最深存在祖先）
+// - assertWithinWorkspaceByRealpath：符号链接逃逸防护（SEC-16-03 重写：逐段 lstat + readlink）
 //
-// 策略：vi.hoisted mock appConfigRepo(Map) 与 fs（existsSync/realpathSync 可编程）。
+// 策略：vi.hoisted mock appConfigRepo(Map) 与 fs（existsSync/realpathSync/lstatSync/readlinkSync 可编程）。
 // 工作目录固定为 Windows 风格 C:\\agent-workspace。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const store = new Map<string, string>()
-  // fs mock：existsMap 控制哪些路径存在，realpathMap 控制 realpath 结果
+  // fs mock：existsMap 控制哪些路径存在，realpathMap 控制 realpath 结果；
+  // lstatMap/readlinkMap 驱动 SEC-16-03 重写后的逐段符号链接解析
   const existsMap = new Map<string, boolean>()
   const realpathMap = new Map<string, string>()
+  const lstatMap = new Map<string, { isSymbolicLink: boolean }>()
+  const readlinkMap = new Map<string, string>()
   return {
     store,
     existsMap,
     realpathMap,
+    lstatMap,
+    readlinkMap,
     appConfigRepo: {
       get: (k: string) => (store.has(k) ? store.get(k)! : null),
       set: (k: string, v: string) => store.set(k, v),
@@ -28,6 +33,16 @@ const mocks = vi.hoisted(() => {
       realpathSync: (p: string) => {
         if (mocks.realpathMap.has(p)) return mocks.realpathMap.get(p)!
         throw new Error(`ENOENT: no such file or directory, realpath '${p}'`)
+      },
+      lstatSync: (p: string) => {
+        // 实现按 fs.Stats 调用 st.isSymbolicLink()（函数调用），mock 必须包成方法
+        const entry = mocks.lstatMap.get(p)
+        if (entry) return { isSymbolicLink: () => entry.isSymbolicLink }
+        throw new Error(`ENOENT: no such file or directory, lstat '${p}'`)
+      },
+      readlinkSync: (p: string) => {
+        if (mocks.readlinkMap.has(p)) return mocks.readlinkMap.get(p)!
+        throw new Error(`EACCES: permission denied, readlink '${p}'`)
       }
     }
   }
@@ -62,6 +77,8 @@ beforeEach(() => {
   mocks.store.clear()
   mocks.existsMap.clear()
   mocks.realpathMap.clear()
+  mocks.lstatMap.clear()
+  mocks.readlinkMap.clear()
 })
 
 describe('getWorkspaceDir / setWorkspaceDir', () => {
@@ -121,59 +138,93 @@ describe('resolveWorkspacePath — 路径穿越防护', () => {
   })
 })
 
-describe('assertWithinWorkspaceByRealpath — 符号链接逃逸防护', () => {
+describe('assertWithinWorkspaceByRealpath — 符号链接逃逸防护（SEC-16-03 重写）', () => {
   it('路径上无任何存在节点 → 放行（无法构造 symlink 逃逸）', () => {
-    // existsMap 全空，整条路径待创建
+    // lstatMap 全空，整条路径待创建：逐段 lstat 全失败，回溯到根后放行
     const target = path.join(WS, 'new', 'dir', 'file.txt')
+    mocks.realpathMap.set(WS, WS)
     expect(() => assertWithinWorkspaceByRealpath(target, WS)).not.toThrow()
   })
 
-  it('存在节点 realpath 仍在工作目录内 → 放行', () => {
+  it('中间目录存在且非链接 → 放行（回溯到工作目录根即终止）', () => {
     const sub = path.join(WS, 'sub')
-    mocks.existsMap.set(sub, true)
-    mocks.realpathMap.set(sub, sub) // 无符号链接，realpath 不变
+    mocks.lstatMap.set(sub, { isSymbolicLink: false })
     mocks.realpathMap.set(WS, WS)
     const target = path.join(sub, 'file.txt')
     expect(() => assertWithinWorkspaceByRealpath(target, WS)).not.toThrow()
   })
 
-  it('存在节点是符号链接，realpath 逃逸出工作目录 → 抛错', () => {
-    const link = path.join(WS, 'evil-link')
-    mocks.existsMap.set(link, true)
-    // 符号链接指向工作目录外
-    mocks.realpathMap.set(link, 'C:\\secret-data')
+  it('悬空链接（目标尚不存在）→ 抛错（SEC-16-03 修复的核心用例）', () => {
+    // 旧实现 existsSync 对悬空链接返回 false → 回退到工作目录内父级 → 放行；
+    // 新实现逐段 lstat 能看到链接本身，readlink 解析原始目标后拒绝
+    const link = path.join(WS, 'dangling-link')
+    mocks.lstatMap.set(link, { isSymbolicLink: true })
+    mocks.readlinkMap.set(link, 'C:\\secret-data\\x.txt')
     mocks.realpathMap.set(WS, WS)
     const target = path.join(link, 'file.txt')
     expect(() => assertWithinWorkspaceByRealpath(target, WS)).toThrow('符号链接逃逸')
   })
 
-  it('最深存在祖先逃逸 → 抛错（目标本身不存在，但父目录是逃逸 symlink）', () => {
-    const parent = path.join(WS, 'bad-parent')
-    mocks.existsMap.set(parent, true)
-    mocks.realpathMap.set(parent, 'C:\\escape')
+  it('已存在链接且目标逃逸 → 抛错', () => {
+    const link = path.join(WS, 'evil-link')
+    mocks.lstatMap.set(link, { isSymbolicLink: true })
+    mocks.readlinkMap.set(link, 'C:\\secret-data')
     mocks.realpathMap.set(WS, WS)
-    // target 是 parent 下的不存在文件，向上找到 parent 存在
-    const target = path.join(parent, 'nonexistent.txt')
+    const target = path.join(link, 'file.txt')
     expect(() => assertWithinWorkspaceByRealpath(target, WS)).toThrow('符号链接逃逸')
   })
 
-  it('工作目录本身是 symlink，realpath 后目标仍在其真实路径内 → 放行', () => {
+  it('链接指向工作目录内 → 放行', () => {
+    const link = path.join(WS, 'ok-link')
+    const inner = path.join(WS, 'real-dir')
+    mocks.lstatMap.set(link, { isSymbolicLink: true })
+    mocks.readlinkMap.set(link, inner)
+    mocks.realpathMap.set(WS, WS)
+    const target = path.join(link, 'file.txt')
+    expect(() => assertWithinWorkspaceByRealpath(target, WS)).not.toThrow()
+  })
+
+  it('链式链接（link1 → link2 → 工作目录外）→ 抛错', () => {
+    const link1 = path.join(WS, 'link1')
+    const link2 = path.join(WS, 'link2')
+    mocks.lstatMap.set(link1, { isSymbolicLink: true })
+    mocks.readlinkMap.set(link1, link2)
+    mocks.lstatMap.set(link2, { isSymbolicLink: true })
+    mocks.readlinkMap.set(link2, 'C:\\escape')
+    mocks.realpathMap.set(WS, WS)
+    const target = path.join(link1, 'file.txt')
+    expect(() => assertWithinWorkspaceByRealpath(target, WS)).toThrow('符号链接逃逸')
+  })
+
+  it('工作目录本身是 symlink，链接解析回真实路径 → 放行', () => {
     const realWs = 'D:\\real-workspace'
-    mocks.existsMap.set(WS, true)
-    mocks.realpathMap.set(WS, realWs)
+    mocks.lstatMap.set(WS, { isSymbolicLink: true })
+    mocks.readlinkMap.set(WS, realWs)
     const sub = path.join(WS, 'sub')
-    mocks.existsMap.set(sub, true)
-    mocks.realpathMap.set(sub, path.join(realWs, 'sub'))
+    mocks.lstatMap.set(sub, { isSymbolicLink: false })
+    mocks.realpathMap.set(WS, realWs)
     const target = path.join(sub, 'file.txt')
     expect(() => assertWithinWorkspaceByRealpath(target, WS)).not.toThrow()
   })
 
-  it('realpath 自身失败（非越界错误）→ 保守拒绝', () => {
+  it('readlink 自身失败（权限等）→ 保守拒绝（不知道链接指向哪里就不能放行）', () => {
     const sub = path.join(WS, 'sub')
-    mocks.existsMap.set(sub, true)
-    // realpathMap 不设 sub，realpathSync 抛 ENOENT
+    mocks.lstatMap.set(sub, { isSymbolicLink: true })
+    // readlinkMap 不登记 sub → readlinkSync 抛 EACCES
     mocks.realpathMap.set(WS, WS)
     expect(() => assertWithinWorkspaceByRealpath(path.join(sub, 'f.txt'), WS)).toThrow('路径校验失败')
+  })
+
+  it('工作目录的祖先上有符号链接 → 不误报（回溯在工作目录根终止）', () => {
+    // Windows 用户目录下的 junction 是合法的；守卫管辖范围是工作目录内部，
+    // 向上回溯到工作目录根必须停（旧实现与新实现重写时都容易在这里产生误报回归）
+    const parentOfWs = path.dirname(WS)
+    mocks.lstatMap.set(parentOfWs, { isSymbolicLink: true })
+    mocks.readlinkMap.set(parentOfWs, 'C:\\somewhere-else')
+    mocks.realpathMap.set(WS, WS)
+    const sub = path.join(WS, 'sub')
+    mocks.lstatMap.set(sub, { isSymbolicLink: false })
+    expect(() => assertWithinWorkspaceByRealpath(path.join(sub, 'f.txt'), WS)).not.toThrow()
   })
 
   it('工作目录/数据目录本身不存在 → 放行（无从构造链接，交给 fs 自然报 ENOENT）', () => {

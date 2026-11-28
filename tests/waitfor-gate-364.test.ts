@@ -738,8 +738,8 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-mcp-none-mode-save.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:58 -> :59',
       'tests/renderer-provider-http-confirm.test.tsx:64 -> :65',
-      // 该用例新增反向对照后这颗「不在场」判据下移到 293→294，判语本身不变
-      'tests/renderer-provider-settings.test.tsx:293 -> :294',
+      // SEC-16-11（reveal token）给本文件上方用例补桩后这颗「不在场」判据再次下移 293→298，判语本身不变（人工过目确认：同用例同形状）
+      'tests/renderer-provider-settings.test.tsx:298 -> :299',
       'tests/renderer-websearch-b3.test.tsx:74 -> :76', // §404 现量＋10：补搜索深度三档（档位选择与行内说明）插在上方，形状与判语一字未动；SEC-1 收口批删掉确认弹层后整体上移，重钉为 74→76
       'tests/renderer-wizard-328.test.tsx:211 -> :212',
       'tests/capability-visibility-428.test.tsx:103 -> :104', // §429 迁移（原 §436 判语沿用）：门等 `reads === 1`（失败那一发已发出、渲染已重跑），紧随断言网格没长出假 0；门与断言读同一屏、失败落屏与计数条件同批 ⇒ 只会漏报，不会假红。

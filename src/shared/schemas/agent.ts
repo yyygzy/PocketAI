@@ -10,6 +10,8 @@ const AGENT_MAX_SEARXNG_URL_CHARS = 512
 const AGENT_MAX_PATH_CHARS = 1024
 const AGENT_MAX_PATHS = 20
 const AGENT_MAX_ID_CHARS = 64
+/** SEC-16-09：path token 是主进程签发的随机句柄（randomUUID），按 UUID 形状给上限 */
+const AGENT_MAX_TOKEN_CHARS = 64
 
 /** AGENT_SET_SHELL_CONFIG 入参 */
 export const shellConfigSchema = z.object({
@@ -33,10 +35,13 @@ export const websearchConfigSchema = z.object({
   depth: z.enum(WEB_SEARCH_DEPTH_SETTINGS).optional()
 })
 
-/** AGENT_SET_CALENDAR_CONFIG 入参 */
+/** AGENT_SET_CALENDAR_CONFIG 入参（SEC-16-09：paths 收 path token，不再收绝对路径） */
 export const calendarConfigSchema = z.object({
   enabled: z.boolean().optional(),
-  paths: z.array(z.string().max(AGENT_MAX_PATH_CHARS)).max(AGENT_MAX_PATHS).optional()
+  /** AGENT_PICK_ICS_FILE 签发的路径令牌；是否真的对应「本进程对话框选中过的 .ics」由主进程 peek 判定 */
+  paths: z.array(z.string().min(1).max(AGENT_MAX_TOKEN_CHARS)).max(AGENT_MAX_PATHS).optional(),
+  /** 要移除的文件（getCalendarConfig 回读的绝对路径）；移除不产生读取，不受令牌约束 */
+  removePaths: z.array(z.string().max(AGENT_MAX_PATH_CHARS)).max(AGENT_MAX_PATHS).optional()
 })
 
 /** AGENT_TOOL_APPROVE_RESPONSE 入参 */

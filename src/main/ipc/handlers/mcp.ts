@@ -5,6 +5,7 @@ import { IPC } from '../../../shared/types'
 import type { McpServerRecord, PythonPipSource } from '../../../shared/types'
 import { mcpServerRepo } from '../../db/repositories/mcp-server.repo'
 import { mcpCallLogRepo } from '../../db/repositories/mcp-call-log.repo'
+import { securityEventRepo } from '../../db/repositories/security-event.repo'
 import { createLogger } from '../../logger'
 import { mcpManager } from '../../mcp/manager'
 import { getMcpSitePolicy, saveMcpSitePolicy } from '../../mcp/outbound-policy'
@@ -33,6 +34,13 @@ import { buildMcpPackageFile, MCP_MAX_IMPORT_BYTES } from '../../mcp/mcp-package
 import { importMcpPackageText } from '../../mcp/mcp-import-service'
 import { safeFileName } from '../../../shared/export-markdown'
 import { maskSecretMap } from '../../../shared/secret-mask'
+import {
+  issueRevealToken,
+  consumeRevealToken,
+  revealCooldownOk,
+  markRevealDone,
+  CREDENTIAL_REVEAL_KIND
+} from '../credential-reveal'
 import type { McpServerRuntime } from '../../../shared/types'
 
 const log = createLogger('mcp')
@@ -130,12 +138,30 @@ export function registerMcpHandlers(): void {
     const rec = mcpServerRepo.get(id)
     return rec ? maskMcpRecord(rec) : null
   }, argsSchema(idSchema))
+  // SEC-16-11：签发一次性 reveal 令牌（无业务副作用；锁屏期间被网关 fail-closed 拦截）
+  safeHandle(IPC.MCP_SERVER_REQUEST_REVEAL_TOKEN, () => ({
+    ok: true as const,
+    token: issueRevealToken('mcp')
+  }))
   // 显式揭示真实 env/headers（编辑/复制场景按需调用，单条查询）
-  safeHandle(IPC.MCP_SERVER_REVEAL_SECRETS, (_e, id: string) => {
+  // SEC-16-11：冷却闸 → 令牌消费（先焚后验）→ 审计留痕 → 取值；message/detail 不含密钥值
+  safeHandle(IPC.MCP_SERVER_REVEAL_SECRETS, (_e, id: string, token: string) => {
+    if (!revealCooldownOk('mcp', id)) {
+      return { ok: false as const, error: '操作过于频繁：同一连接器的密钥揭示有 60 秒冷却，请稍后再试' }
+    }
+    if (!consumeRevealToken('mcp', token)) {
+      return { ok: false as const, error: '查看密钥需重新确认' }
+    }
+    securityEventRepo.append({
+      kind: CREDENTIAL_REVEAL_KIND,
+      message: `揭示 MCP Server 凭据: ${id}`,
+      detail: { serverId: id }
+    })
+    markRevealDone('mcp', id)
     const rec = mcpServerRepo.get(id)
     if (!rec) return { ok: false as const, error: 'MCP Server 不存在' }
     return { ok: true as const, env: rec.env, headers: rec.headers }
-  }, argsSchema(idSchema))
+  }, argsSchema(idSchema, z.string()))
   safeHandle(IPC.MCP_SERVER_SAVE, (_e, record: Partial<McpServerRecord> & { name: string }) =>
     maskMcpRecord(mcpServerRepo.save(record)),
   argsSchema(mcpServerSaveSchema))

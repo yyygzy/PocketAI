@@ -28,7 +28,17 @@ vi.mock('../src/main/db/database', () => ({
           const src = sql.includes('usage_events') ? h.events : h.rows
           return typeof since === 'number' ? src.filter((r) => r.created_at >= since) : src
         },
-        get: () => undefined,
+        // PERF-06 指纹查询（SELECT COUNT(*)）：给内容相关的计数签名，行变化即失效缓存；
+        // 其余 get 调用维持旧行为返回 undefined
+        get: (since?: number) => {
+          if (!sql.includes('COUNT(*)')) return undefined
+          const src = sql.includes('usage_events') ? h.events : h.rows
+          const filtered = typeof since === 'number' ? src.filter((r) => r.created_at >= since) : src
+          return {
+            n: filtered.length,
+            maxRowid: filtered.reduce((a, r) => a + r.created_at, 0)
+          }
+        },
         run: () => {}
       })
     })

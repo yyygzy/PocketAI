@@ -134,7 +134,8 @@ export function agentToolsStub(over: Partial<AgentToolConfigs> = {}): AgentToolC
     retryWorkspace: () => { /* 同上 */ },
     patchShellConfig: async () => { /* 同上 */ },
     patchWsConfig: async () => { /* 同上 */ },
-    patchCalConfig: async () => { /* 同上 */ },
+    // SEC-16-09：patchCalConfig 返回保存后的回读配置（null=失败）；桩只保形状，不演业务
+    patchCalConfig: async () => null,
     addIcs: async () => { /* 同上 */ },
     ...over
   }

@@ -1,4 +1,5 @@
 // Work Agent IPC：中止 / 工作目录 / shell 与联网搜索与日历策略 / 工具审批应答 / 工具清单
+import path from 'node:path'
 import { BrowserWindow, dialog } from 'electron'
 import { IPC, WEB_SEARCH_DEPTH_SETTINGS, WEB_SEARCH_PROVIDERS } from '../../../shared/types'
 import type { WebSearchDepthSetting, WebSearchProvider } from '../../../shared/types'
@@ -9,7 +10,12 @@ import { getWorkspaceDir, setWorkspaceDir, restoreFileWrite } from '../../tools/
 import { snapshotExists } from '../../agent/file-snapshots'
 import { getShellConfig, setShellConfig } from '../../tools/shell-config'
 import { getWebSearchConfig, setWebSearchConfig } from '../../tools/websearch-config'
-import { getCalendarConfig, setCalendarConfig } from '../../tools/calendar-ics'
+import {
+  getCalendarConfig,
+  setCalendarConfig,
+  resolveIcsPathTokens
+} from '../../tools/calendar-ics'
+import { issuePathToken, dropPathToken } from '../dialog-path-token'
 import { resolveApproval } from '../../agent/tool-approval'
 import { agentTraceRepo } from '../../db/repositories/agent-trace.repo'
 import { annotateTraceReplay } from '../../agent/trace-replay'
@@ -208,20 +214,36 @@ export function registerAgentHandlers(): void {
   )
 
   // 本地日历配置（calendar.read 工具）：启停 + .ics 路径列表
+  // SEC-16-09：写入通道收紧——paths 收的是 AGENT_PICK_ICS_FILE 签发的 path token，
+  // 由 resolveIcsPathTokens 在主进程 peek 解析；渲染端伪造的句柄（含裸绝对路径）一律丢弃。
+  // 兼容口径：旧库里已存的路径照常可读（getCalendarConfig 不变），只有**写入**走令牌。
   safeHandle(IPC.AGENT_GET_CALENDAR_CONFIG, () => getCalendarConfig())
   safeHandle(
     IPC.AGENT_SET_CALENDAR_CONFIG,
-    (_e, input: { enabled?: unknown; paths?: unknown }) => {
-      const patch: { enabled?: boolean; paths?: string[] } = {}
-      if (typeof input?.enabled === 'boolean') patch.enabled = input.enabled
-      if (Array.isArray(input?.paths)) {
-        patch.paths = input.paths.filter((p): p is string => typeof p === 'string')
+    (_e, input: { enabled?: unknown; paths?: unknown; removePaths?: unknown }) => {
+      const { paths, unknownCount } = resolveIcsPathTokens(input?.paths)
+      if (unknownCount > 0) {
+        log.warn(`AGENT_SET_CALENDAR_CONFIG: ${unknownCount} 个无效/过期的路径令牌被拒`)
       }
-      return setCalendarConfig(patch)
+      // 追加/移除各自成 patch：渲染端只持有 token，无法把已存路径整表传回，所以不再做全量替换
+      const next = setCalendarConfig({
+        enabled: typeof input?.enabled === 'boolean' ? input.enabled : undefined,
+        addPaths: paths,
+        removePaths: Array.isArray(input?.removePaths)
+          ? input.removePaths.filter((p): p is string => typeof p === 'string')
+          : undefined
+      })
+      // peek 允许保存失败后的重试；这里已保存成功，把提交过的 token 全部 drop（一次作废）。
+      // 解析失败的那个也一并 drop——它要么伪造要么过期，留着只会撑令牌池。
+      for (const t of Array.isArray(input?.paths) ? input.paths : []) {
+        dropPathToken(typeof t === 'string' ? t : undefined)
+      }
+      return next
     },
     argsSchema(calendarConfigSchema)
   )
-  // 文件选择对话框挑 .ics 文件（渲染端拿到路径后走 set-config 保存）
+  // 文件选择对话框挑 .ics（SEC-16-09）：绝对路径不出主进程，只签发一次性 path token
+  // + 界面展示用文件名；渲染层拿 token 走 SET_CALENDAR_CONFIG 保存。
   safeHandle(IPC.AGENT_PICK_ICS_FILE, async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     if (!win) return { canceled: true }
@@ -231,7 +253,8 @@ export function registerAgentHandlers(): void {
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return { canceled: true }
-    return { canceled: false, path: result.filePaths[0] }
+    const chosen = result.filePaths[0]!
+    return { canceled: false, token: issuePathToken(chosen), fileName: path.basename(chosen) }
   })
 
   // 会话最近一次 Agent 运行的汇总统计（步数/耗时/token，来自 agent_traces 聚合）

@@ -1177,6 +1177,8 @@ export const en = {
   'agent.calendar.hintOff': 'Disabled: the Agent cannot read your schedule',
   'agent.calendar.hintNoFile': 'Enabled but no calendar file added — click "Add .ics" to pick one',
   'agent.calendar.hintOn': 'The Agent can call calendar_read to check your schedule (with confirmation per call)',
+  'agent.calendar.added': 'Calendar file added: {name}',
+  'agent.calendar.addRejected': 'Not added (duplicate or not an .ics file): {name}',
 
   // Channels (IM bot gateway: Telegram)
   'channel.tab': '🛰 Channels',
@@ -1316,6 +1318,7 @@ export const en = {
   'agent.approval.field.apply_patch_stats': 'Change size per file (~ = too many lines to align, ⋯ = display truncated)',
   'agent.approval.field.apply_patch_diff': 'Patch changes (- current content, + after change)',
   'agent.approval.field.apply_patch_error': 'Patch validation error',
+  'agent.approval.field.calendar_files': 'Calendar files to be read',
   'agent.approval.reason.GENERIC': 'This action requires your confirmation before running.',
   'agent.approval.reason.REQUIRES_CONFIRM': 'Policy is "confirm each": every command needs your manual approval.',
   'agent.approval.reason.SHELL_DISABLED': 'Shell command execution is disabled.',

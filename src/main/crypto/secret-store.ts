@@ -9,7 +9,33 @@
 // - exportSecrets()/restoreSecrets()：主密码启用/禁用/轮换时随字段密钥重加密
 
 import { appConfigRepo } from '../db/repositories/app-config.repo'
-import { encryptSecret, decryptSecret, isCipherText, hasUndecryptableCipher } from './field-encrypt'
+import { dbService } from '../db/database'
+import {
+  encryptSecret,
+  decryptSecret,
+  isCipherText,
+  hasUndecryptableCipher,
+  wirePlaintextMigrationMarker,
+  markPlaintextMigrationDone,
+  clearPlaintextMigrationDone,
+  PLAINTEXT_MIGRATION_DONE_KEY
+} from './field-encrypt'
+
+// SEC-16-07：把「明文迁移已完成」标记的读/写接进 field-encrypt（见彼处的依赖方向说明）。
+// 标记落在 app_config：读走 appConfigRepo 的缓存；DB 未打开时按「未完成」＝明文直通。
+wirePlaintextMigrationMarker(
+  () => {
+    try {
+      return appConfigRepo.get(PLAINTEXT_MIGRATION_DONE_KEY) === '1'
+    } catch {
+      return false
+    }
+  },
+  {
+    mark: () => appConfigRepo.set(PLAINTEXT_MIGRATION_DONE_KEY, '1'),
+    clear: () => appConfigRepo.delete(PLAINTEXT_MIGRATION_DONE_KEY)
+  }
+)
 import { createLogger } from '../logger'
 import { errMsg } from '../error'
 import { z } from 'zod'
@@ -58,10 +84,56 @@ export function hasSecret(key: string): boolean {
 }
 
 /**
+ * SEC-16-07 迁移收尾的扫描面：三处明文凭据（provider.api_key_encrypted /
+ * mcp_servers.env+headers / SECRET_KV_KEYS 登记的 KV）里还有没有非密文形状的值。
+ * 只读查询，不改任何 repo。WebDAV 口令不在列：saveWebDAVConfig 从落盘起就写密文信封，
+ * 且它在 JSON 配置串里层，不属于这三个迁移函数的管辖面。
+ */
+function hasPlaintextSecretsLeft(): boolean {
+  const db = dbService.getHandle()
+  const providerRows = db
+    .prepare(
+      "SELECT api_key_encrypted AS v FROM providers WHERE api_key_encrypted IS NOT NULL AND api_key_encrypted != ''"
+    )
+    .all() as { v: string }[]
+  if (providerRows.some((r) => !isCipherText(r.v))) return true
+  const mcpRows = db.prepare('SELECT env, headers FROM mcp_servers').all() as {
+    env: string | null
+    headers: string | null
+  }[]
+  if (mcpRows.some((r) => (r.env && !isCipherText(r.env)) || (r.headers && !isCipherText(r.headers)))) {
+    return true
+  }
+  for (const key of Object.values(SECRET_KV_KEYS)) {
+    const raw = appConfigRepo.get(key)
+    if (raw && !isCipherText(raw)) return true
+  }
+  return false
+}
+
+/**
  * 历史明文 → 密文的一次性升级（幂等）。
  * 必须在字段密钥可用时调用（DB 打开且解锁完成后）。
+ *
+ * SEC-16-07 收尾接线：index.ts 阶段 3 把三个明文迁移同步连跑
+ * （migrateKvSecrets → migrateLegacyWebSearchKey → providerRepo.migratePlaintextKeys
+ * → mcpServerRepo.migratePlaintextSecrets），而后两个迁移本体经
+ * decryptApiKeys/decryptSecretMap → decryptSecret 读值——迁移期必须保持明文直通。
+ * 所以「明文迁移已完成」标记不能在本函数同步落：
+ * 1. 入口先扫一遍：发现明文残留（含上次启动标记已落但数据又回到了明文，如合并旧云备份）
+ *    就撤回标记，让本次整个迁移块稳定工作在直通通道上——否则迁移本体把明文读成空串，
+ *    会把空密文写回去＝凭据被清空；
+ * 2. 排一个宏任务（setTimeout 0）等阶段 3 整个同步块跑完，再扫一遍确认无明文残留才落标记；
+ *    迁移中途抛错（index.ts 只 warn 不阻塞启动）时扫得出残留，标记不落＝保持直通，
+ *    下个启动重试迁移，绝不把「迁移失败」误当成「迁移完成」。
  */
 export function migrateKvSecrets(keys: readonly string[] = Object.values(SECRET_KV_KEYS)): void {
+  // 入口扫描（DB 不可用＝按未标记处理，等宏任务里再试）
+  try {
+    if (hasPlaintextSecretsLeft()) clearPlaintextMigrationDone()
+  } catch {
+    /* DB 未打开等：标记维持原状 */
+  }
   for (const key of keys) {
     const raw = appConfigRepo.get(key)
     if (raw && !isCipherText(raw)) {
@@ -69,6 +141,18 @@ export function migrateKvSecrets(keys: readonly string[] = Object.values(SECRET_
       log.info(`KV 凭据已升级为字段加密: ${key}`)
     }
   }
+  setTimeout(() => {
+    try {
+      if (hasPlaintextSecretsLeft()) {
+        log.warn('仍存在明文凭据（迁移未完成或中途失败），fail-closed 门保持关闭（本次启动明文直通）')
+        return
+      }
+      markPlaintextMigrationDone()
+      log.info('明文凭据迁移收尾完成：字段读取进入 fail-closed')
+    } catch (e) {
+      log.warn('迁移完成标记写入失败（保持明文直通，下个启动重试）:', errMsg(e))
+    }
+  }, 0)
 }
 
 /** 密钥轮换前：用「旧字段密钥」导出明文快照（仅进程内存）；解不开的行单列进 undecryptable（§375，不进快照＝保持原密文不动） */

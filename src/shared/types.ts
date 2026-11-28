@@ -1516,6 +1516,28 @@ export interface CalendarConfig {
   paths: string[]
 }
 
+/** SEC-16-09：AGENT_PICK_ICS_FILE 的回包。绝对路径不出主进程，只给一次性 path token + 文件名 */
+export interface IcsFilePickResult {
+  canceled: boolean
+  /** 主进程签发的路径令牌（dialog-path-token：TTL 10 分钟、容量 20、peek 不消费） */
+  token?: string
+  /** 仅用于界面展示的文件名（不含目录） */
+  fileName?: string
+}
+
+/**
+ * SEC-16-09：AGENT_SET_CALENDAR_CONFIG 入参。写入通道收紧：
+ * - paths 现在是 **path token 数组**（AGENT_PICK_ICS_FILE 签发），不再是绝对路径；
+ *   主进程 peek 解析出真实路径后才落库，渲染端伪造的句柄一律被拒。
+ * - removePaths 是要移除的文件（传 getCalendarConfig 回读的绝对路径）；
+ *   移除不产生任何读取，不受令牌约束。
+ */
+export interface CalendarConfigPatch {
+  enabled?: boolean
+  paths?: string[]
+  removePaths?: string[]
+}
+
 // ---------- Channels（IM Bot 网关：Telegram/飞书/钉钉/Slack/Discord） ----------
 export type ChannelType = 'telegram' | 'feishu' | 'dingtalk' | 'slack' | 'discord'
 export const CHANNEL_TYPES: readonly ChannelType[] = ['telegram', 'feishu', 'dingtalk', 'slack', 'discord']
@@ -3140,6 +3162,8 @@ export const IPC = {
   PROVIDER_TEST: 'provider:test',
   /** 按需揭示单个 Provider 的真实密钥（列表已改为掩码视图，编辑/复制时显式调用） */
   PROVIDER_REVEAL_KEYS: 'provider:reveal-keys',
+  /** SEC-16-11：reveal 的单次令牌签发（消费一次即失效，TTL 60s；先取令牌再走 REVEAL_KEYS） */
+  PROVIDER_REQUEST_REVEAL_TOKEN: 'provider:request-reveal-token',
 
   ASSISTANT_LIST: 'assistant:list',
   ASSISTANT_GET: 'assistant:get',
@@ -3335,6 +3359,8 @@ export const IPC = {
   MCP_SERVER_GET: 'mcp-server:get',
   /** 按需揭示单个 Server 的 env/headers 真实值（列表已改为掩码视图） */
   MCP_SERVER_REVEAL_SECRETS: 'mcp-server:reveal-secrets',
+  /** SEC-16-11：reveal 的单次令牌签发（消费一次即失效，TTL 60s；先取令牌再走 REVEAL_SECRETS） */
+  MCP_SERVER_REQUEST_REVEAL_TOKEN: 'mcp-server:request-reveal-token',
   MCP_SERVER_SAVE: 'mcp-server:save',
   MCP_SERVER_DELETE: 'mcp-server:delete',
   /** 导出全部 MCP 配置为标准 mcpServers JSON（敏感值默认脱敏，showSaveDialog 选路径） */

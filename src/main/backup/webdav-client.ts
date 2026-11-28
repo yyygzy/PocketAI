@@ -66,9 +66,11 @@ function loadWebdav() {
 //    maxContentLength/maxBodyLength 是死选项，运行时代码不读取）
 //
 // 另记一笔（SEC-36 修好认证构造之后才成立）：此前凭据从未真正发出，http 端点
-// 上也就没携带过口令；修好后 http WebDAV 会以 Basic(base64) 明文携带，与
-// SEC-16 的 provider baseUrl 属同一口径问题（内网 NAS 是合法场景，故仍不拦截，
-// 是否加提示语留给产品决定）。
+// 上也就没携带过口令；修好后 http WebDAV 会以 Basic(base64) 明文携带。这条通道上
+// 承载的是长期账号口令（不同于 safeFetch/图片抓取那类临时内容），按 SEC-16-06
+// 与 provider 侧 assertProviderBaseUrlSafe 对齐：回环放行，非回环强制 https——
+// 同一 Wi-Fi / 交换机镜像 / ARP 欺骗可直接解码 base64 拿到口令，明文 http 不再放行
+// （内网 NAS 若必须明文 http，属产品决策项，见审计文档 SEC-16-06 的二次确认方案）。
 
 /** 轻请求（exists/PROPFIND/mkdir/delete）：20s */
 const TIMEOUT_LIGHT_MS = 20_000
@@ -119,6 +121,12 @@ async function buildClient(creds: WebDAVCredentials): Promise<WebDAVClient> {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`WebDAV 仅支持 http/https 协议（收到 ${parsed.protocol}）`)
+  }
+  // SEC-16-06：Basic(base64) 在明文 http 上等于把账号口令公开传输（口令是长期凭据，
+  // 不是临时内容），与 provider 侧口径对齐——仅本机回环放行 http，其余强制 https。
+  const isLoopback = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(parsed.hostname)
+  if (parsed.protocol === 'http:' && !isLoopback) {
+    throw new Error('WebDAV 地址必须使用 https（仅本机回环允许 http）：明文 http 会以 Basic(base64) 明文携带账号口令')
   }
   const { createClient, AuthType } = await loadWebdav()
   // AuthType.Auto：先带 Basic 头发出；服务端若回 401 + `WWW-Authenticate: Digest`

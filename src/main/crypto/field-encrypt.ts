@@ -1,7 +1,8 @@
 // 字段级加密工具（M1.1 L3 层）
 //
 // 透明加解密：在 repo 层自动处理
-// - 读：检测密文（v1: 前缀）→ 解密；否则视为明文直接返回（向后兼容）
+// - 读：检测密文（v1: 前缀）→ 解密；SEC-16-07：明文只在「迁移完成标记」未落时
+//   直通（兼容旧库的迁移期通道），标记落盘后非密文形状一律 fail-closed 返回空串
 // - 写：总是加密后存储
 //
 // 密文格式：v1:base64(iv:12 + ciphertext + tag:16)
@@ -40,6 +41,52 @@ export function isCipherText(s: string): boolean {
   return true
 }
 
+// ─── SEC-16-07：明文迁移完成标记 ──────────────────────────────────
+//
+// 标记本体落在 app_config 的 `crypto.plaintext_migration_done`（随数据走：整库恢复
+// 旧备份时标记跟着旧库一起回退，读侧自动回到明文直通，等下一次启动的迁移把明文
+// 升级后再落标记）。
+//
+// 为什么是「注入」而不是 field-encrypt 直接 import appConfigRepo：field-encrypt 被
+// provider.repo / mcp-server.repo / backup-service 等大量模块引用，一旦引上
+// app-config.repo，就把 db → portable → electron 整条重链拖进它的每一个引用方
+// （几十份单测环境会当场炸在 app.isPackaged 上）。所以标记的读写由 secret-store
+// 在模块加载时经 wirePlaintextMigrationMarker 注入（secret-store 本来就引着
+// appConfigRepo）；未接线的环境（纯单测）默认「未完成」＝明文直通，与旧行为一致。
+// 生产路径 index.ts 顶层 import secret-store，接线必然先于一切解密调用发生。
+export const PLAINTEXT_MIGRATION_DONE_KEY = 'crypto.plaintext_migration_done'
+
+let readMigrationMarker: () => boolean = () => false
+let writeMigrationMarker: { mark(): void; clear(): void } | null = null
+
+/** 由 secret-store 模块加载时注入标记的读/写实现（幂等，重复注入以最后一次为准） */
+export function wirePlaintextMigrationMarker(
+  read: () => boolean,
+  write: { mark(): void; clear(): void }
+): void {
+  readMigrationMarker = read
+  writeMigrationMarker = write
+}
+
+/** 迁移完成标记是否已落盘（DB 不可用等异常一律按「未完成」＝明文直通处理） */
+export function isPlaintextMigrationDone(): boolean {
+  try {
+    return readMigrationMarker()
+  } catch {
+    return false
+  }
+}
+
+/** 落「明文迁移已完成」标记（由 secret-store 的迁移收尾在确认无明文残留后调用） */
+export function markPlaintextMigrationDone(): void {
+  writeMigrationMarker?.mark()
+}
+
+/** 撤回标记（迁移收尾发现明文残留时回退到直通通道，让下个启动的迁移能读出明文） */
+export function clearPlaintextMigrationDone(): void {
+  writeMigrationMarker?.clear()
+}
+
 /** 单字符串加密：任意 UTF-8 文本 → v1:base64（空串返回空串） */
 export function encryptSecret(plaintext: string): string {
   if (!plaintext) return ''
@@ -52,12 +99,23 @@ export function encryptSecret(plaintext: string): string {
 }
 
 /**
- * 单字符串解密（向后兼容明文：非 v1: 原样返回）。
+ * 单字符串解密（SEC-16-07：明文直通只在迁移完成标记未落时生效）。
  * 密文损坏/密钥不匹配/锁定期间 → 返回空串（fail closed，调用方按无凭据处理）。
  */
 export function decryptSecret(stored: string | null | undefined): string {
   if (!stored) return ''
-  if (!isCipherText(stored)) return stored // 历史明文：直接返回（等待迁移或下次写入升级）
+  if (!isCipherText(stored)) {
+    // SEC-16-07：改前这里对一切非密文原样返回（fail-open）＝凭据完整性边界靠猜形状，
+    // none 模式下密文列被替换成任意明文也会被当真凭据读走。
+    // 现在由「明文迁移已完成」标记把通道收窄成迁移期专用：标记未落（旧库首次升级、
+    // 迁移尚未跑完/迁移失败重试）保持直通，让三个迁移函数能把历史明文读出来升级；
+    // 标记落盘后（正常稳态）非密文形状一律按数据损坏处理，fail-closed。
+    if (isPlaintextMigrationDone()) {
+      log.warn(`字段值既不是密文也不是已知明文形态，按无凭据处理: len=${stored.length}`)
+      return ''
+    }
+    return stored // 迁移期明文：直接返回（等待本次启动的迁移升级为密文）
+  }
   try {
     const fieldKey = masterKeyManager.getFieldKey()
     const buf = Buffer.from(stored.slice(CIPHER_PREFIX.length), 'base64')
