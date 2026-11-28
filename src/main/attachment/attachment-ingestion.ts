@@ -92,8 +92,9 @@ export async function ingestAttachmentsToKb(
  * 按 source 精确匹配：msg_${messageId}，跨所有 KB 清理。
  */
 export function deleteMessageAttachmentDocs(messageId: string): void {
-  const docs = kbDocRepo.listAll().filter((d) => d.source === `msg_${messageId}`)
-  for (const doc of docs) {
-    kbDocRepo.delete(doc.id)
+  // PERF-07：source 精确匹配走 v85 的 idx_kb_docs_source，不再把整张 kb_documents 拉进内存过滤
+  const ids = kbDocRepo.listIdsBySource(`msg_${messageId}`)
+  for (const id of ids) {
+    kbDocRepo.delete(id)
   }
 }

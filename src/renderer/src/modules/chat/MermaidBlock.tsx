@@ -2,9 +2,12 @@
 //
 // 设计要点：
 // - mermaid 体积大（~1MB），仅在消息中首次出现 mermaid 块时动态 import，不拖首屏
-// - securityLevel: 'strict'：mermaid 自带转义，禁掉点击脚本等危险能力（CSP 也禁脚本）
+// - 安全三层（SEC-16-14，任一层不可删）：① mermaid securityLevel:'strict' 自带转义；
+//   ② DOMPurify 对 dangerouslySetInnerHTML 的 SVG 再做一次白名单净化（dev 模式无 CSP，
+//   这层是唯一兜底）；③ 生产 CSP script-src 'self'。源码来自模型 ⇒ 始终按不可信输入处理。
 // - 渲染失败不炸整条消息：降级显示原始代码 + 错误提示
 // - 主题切换（documentElement.light class）后自动重渲染（SVG 颜色固化，不随 CSS 变量变）
+import DOMPurify from 'dompurify'
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../../i18n'
 import { errText } from '../../utils/error'
@@ -57,7 +60,14 @@ export const MermaidBlock: React.FC<{ code: string }> = ({ code }) => {
           fontFamily: 'inherit'
         })
         const { svg: out } = await mermaid.render(nextId(), code)
-        if (!cancelled && mountedRef.current) setSvg(out)
+        // SEC-16-14：mermaid 输出来自不可信的 LLM 代码，strict 之外必须再做一次
+        // DOMPurify 白名单净化；禁 foreignObject/script/use/animate/set 与全部 href。
+        const clean = DOMPurify.sanitize(out, {
+          USE_PROFILES: { svg: true, svgFilters: true },
+          FORBID_TAGS: ['foreignObject', 'script', 'use', 'animate', 'set'],
+          FORBID_ATTR: ['xlink:href', 'href']
+        })
+        if (!cancelled && mountedRef.current) setSvg(clean)
       } catch (e) {
         if (!cancelled && mountedRef.current) {
           setSvg('')

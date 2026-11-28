@@ -1426,6 +1426,13 @@ class AgentEngine {
       toolStepsDone: resume?.startToolStepsDone
     })
     let loopTimer: ReturnType<typeof setTimeout> | undefined
+    /**
+     * PERF-10：一轮 run 内的全部工具面访问（filterByPermissions / listAll / classify /
+     * getSchema / execute）共用同一份只读索引；N 条工具调用的 buildIndex 从 2N+2 降为 1。
+     * 帧在 run 退出时必清（含 setup 抛错路径），工作目录／shell 策略变更不会跨轮滞留；
+     * 委派的子 run 走同一帧（depth 计数），MCP 增删改/启停在 registry 侧显式失效。
+     */
+    toolRegistry.beginFrame()
     try {
       traceParents.set(requestId, parentRequestId)
       traceModels.set(requestId, target.model)
@@ -2054,6 +2061,9 @@ class AgentEngine {
       const errEvt: AgentErrorEvent = { requestId, conversationId, error: errText }
       emit(IPC.AGENT_ERROR_EVENT, errEvt)
       markRunFinished(conversationId, requestId, aborted ? 'aborted' : 'failed', aborted ? undefined : errText)
+    } finally {
+      // PERF-10：与 beginFrame 成对；setup 抛错也走到这里，绝不把帧快照留到下一轮
+      toolRegistry.endFrame()
     }
   }
 

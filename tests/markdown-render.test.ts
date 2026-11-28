@@ -52,9 +52,12 @@ describe('Markdown — 图片协议收口', () => {
     expect(html).toContain('alt="图"')
   })
 
-  it('https 图片正常渲染', () => {
+  it('https 图片不外链加载（SEC-16-13）：无 img src，降级为可点占位链接', () => {
     const html = md('![x](https://example.com/a.png)')
-    expect(html).toContain('src="https://example.com/a.png"')
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('src="https://example.com/a.png"')
+    expect(html).toContain('href="https://example.com/a.png"')
+    expect(html).toContain('>x</a>')
   })
 
   it('data:text/html 不渲染（只补开 data:image，防 HTML 注入面）', () => {

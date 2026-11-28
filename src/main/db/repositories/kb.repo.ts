@@ -1,6 +1,7 @@
 // 知识库数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { cachedPrepare } from '../statement-cache'
 import { mustGet } from '../must-get'
 import type { KnowledgeBase } from '../../../shared/types'
 
@@ -32,15 +33,22 @@ interface KbCountRow {
   chunk_count: number
 }
 
-export function rowToRecord(row: KbRow): KnowledgeBase {
-  const counts = dbService
-    .getHandle()
-    .prepare(
-      `SELECT
-         (SELECT COUNT(*) FROM kb_documents WHERE kb_id=?) AS doc_count,
-         (SELECT COUNT(*) FROM kb_chunks WHERE kb_id=?) AS chunk_count`
-    )
-    .get(row.id, row.id) as KbCountRow
+/** PERF-07：列表/get 用聚合 JOIN 一次拿到计数；单行 rowToRecord 仍保留原查询兜底（外部有单测直接调用） */
+const KB_WITH_COUNTS_SQL = `SELECT k.*,
+       COALESCE(d.doc_count, 0) AS doc_count,
+       COALESCE(c.chunk_count, 0) AS chunk_count
+     FROM knowledge_bases k
+     LEFT JOIN (SELECT kb_id, COUNT(*) AS doc_count FROM kb_documents GROUP BY kb_id) d ON d.kb_id = k.id
+     LEFT JOIN (SELECT kb_id, COUNT(*) AS chunk_count FROM kb_chunks GROUP BY kb_id) c ON c.kb_id = k.id`
+
+const KB_COUNT_SQL = `SELECT
+       (SELECT COUNT(*) FROM kb_documents WHERE kb_id=?) AS doc_count,
+       (SELECT COUNT(*) FROM kb_chunks WHERE kb_id=?) AS chunk_count`
+
+export function rowToRecord(row: KbRow, counts?: KbCountRow): KnowledgeBase {
+  const resolvedCounts =
+    counts ??
+    (cachedPrepare(dbService.getHandle(), KB_COUNT_SQL).get(row.id, row.id) as KbCountRow)
   return {
     id: row.id,
     name: row.name,
@@ -61,27 +69,28 @@ export function rowToRecord(row: KbRow): KnowledgeBase {
     multiQueryModel: row.multiquery_model,
     ocrProviderId: row.ocr_provider_id,
     ocrModel: row.ocr_model,
-    documentCount: counts.doc_count,
-    chunkCount: counts.chunk_count,
+    documentCount: resolvedCounts.doc_count,
+    chunkCount: resolvedCounts.chunk_count,
     createdAt: row.created_at
   }
 }
 
 export const kbRepo = {
   list(): KnowledgeBase[] {
-    const rows = dbService
-      .getHandle()
-      .prepare('SELECT * FROM knowledge_bases ORDER BY created_at ASC')
-      .all() as KbRow[]
-    return rows.map(rowToRecord)
+    // PERF-07：N 行 × 2 条 COUNT 子查询 → 2 条 GROUP BY 聚合 + 1 条主查询，查询次数 O(1)
+    const rows = cachedPrepare(
+      dbService.getHandle(),
+      `${KB_WITH_COUNTS_SQL} ORDER BY k.created_at ASC`
+    ).all() as Array<KbRow & KbCountRow>
+    return rows.map((row) => rowToRecord(row, row))
   },
 
   get(id: string): KnowledgeBase | null {
-    const row = dbService
-      .getHandle()
-      .prepare('SELECT * FROM knowledge_bases WHERE id=?')
-      .get(id) as KbRow | undefined
-    return row ? rowToRecord(row) : null
+    const row = cachedPrepare(
+      dbService.getHandle(),
+      `${KB_WITH_COUNTS_SQL} WHERE k.id=?`
+    ).get(id) as (KbRow & KbCountRow) | undefined
+    return row ? rowToRecord(row, row) : null
   },
 
   save(input: Partial<KnowledgeBase> & { name: string }): KnowledgeBase {
@@ -90,7 +99,7 @@ export const kbRepo = {
     const id = input.id || randomUUID()
 
     if (existing) {
-      db.prepare(
+      cachedPrepare(db,
         `UPDATE knowledge_bases SET
            name=?, description=?, embedding_provider_id=?, embedding_model=?,
            embedding_dim=?, chunk_size=?, chunk_overlap=?, top_k=?, top_n=?, min_score=?,
@@ -121,7 +130,7 @@ export const kbRepo = {
       )
     } else {
       const now = Date.now()
-      db.prepare(
+      cachedPrepare(db,
         `INSERT INTO knowledge_bases
            (id, name, description, embedding_provider_id, embedding_model, embedding_dim,
             chunk_size, chunk_overlap, top_k, top_n, min_score, rerank_provider_id, rerank_model,
@@ -156,13 +165,13 @@ export const kbRepo = {
 
   /** 首次入库确定向量维度后写回 */
   setEmbeddingDim(id: string, dim: number): void {
-    dbService
-      .getHandle()
-      .prepare('UPDATE knowledge_bases SET embedding_dim=? WHERE id=?')
-      .run(dim, id)
+    cachedPrepare(
+      dbService.getHandle(),
+      'UPDATE knowledge_bases SET embedding_dim=? WHERE id=?'
+    ).run(dim, id)
   },
 
   delete(id: string): void {
-    dbService.getHandle().prepare('DELETE FROM knowledge_bases WHERE id=?').run(id)
+    cachedPrepare(dbService.getHandle(), 'DELETE FROM knowledge_bases WHERE id=?').run(id)
   }
 }

@@ -1,6 +1,6 @@
-// 安全动作审计（目前只有加密模式切换）
+// 安全动作审计（加密模式切换 + 凭据揭示 + 终端命令）
 //
-// 定位：记录「凭据保护发生了什么变化」，不记录凭据本身，也不参与业务决策。
+// 定位：记录「安全域发生了什么动作」，不记录凭据本身与命令中的密钥/口令，也不参与业务决策。
 // 写入失败只记日志、不阻断动作——审计不可用不该把人卡在「想关加密关不掉」的状态里
 // （与 approval-events 的 fail-open 同口径）。
 import { randomUUID } from 'node:crypto'
@@ -9,7 +9,13 @@ import { createLogger } from '../../logger'
 
 const log = createLogger('security-event')
 
-export type SecurityEventKind = 'encryption_disabled' | 'encryption_enabled'
+export type SecurityEventKind =
+  | 'encryption_disabled'
+  | 'encryption_enabled'
+  /** 单次凭据揭示（SEC-16-11：id + 时间，绝不含密钥值） */
+  | 'credential_reveal'
+  /** 终端命令执行/拦截（SEC-16-04：文本经 log-redact 截断） */
+  | 'terminal_command'
 
 export interface SecurityEventInput {
   kind: SecurityEventKind

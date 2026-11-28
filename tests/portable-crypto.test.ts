@@ -1,26 +1,27 @@
 // portable-crypto 密码派生 AES-256-GCM 加解密测试
 //
 // 覆盖 src/main/crypto/portable-crypto.ts：
-// - encryptWithPassword：密码 + 明文 → MOXENC1+salt+iv+tag+ct 格式 Buffer
+// - encryptWithPassword：密码 + 明文 → MOXENC2+kdfId+salt+iv+tag+ct 格式 Buffer
 // - decryptWithPassword：密码 + blob → 明文（密码错误/篡改/格式无效均失败）
-// - isEncryptedBlob：魔数 + 最小长度校验
-// - MAGIC 常量 = 'MOXENC1'
+// - isEncryptedBlob：魔数 + 最小长度校验（新旧两种魔数）
+// - MAGIC 常量 = 'MOXENC2'（写侧新头；旧 MOXENC1 兼容见 sec16-16 独立用例）
 //
-// 策略：纯密码学函数，无依赖，直接走真实 scrypt(N=32768) + AES-256-GCM。
+// 策略：纯密码学函数，无依赖，直接走真实 scrypt(N=2^17) + AES-256-GCM。
 // 加解密闭环验证、篡改检测、不同密码互解失败。
 import { describe, it, expect } from 'vitest'
 import {
   encryptWithPassword,
   decryptWithPassword,
   isEncryptedBlob,
+  KDF_ID_CURRENT,
   MAGIC
 } from '../src/main/crypto/portable-crypto'
 
 const PASSWORD = 'correct horse battery staple'
 
 describe('MAGIC 常量', () => {
-  it('等于 MOXENC1', () => {
-    expect(MAGIC).toBe('MOXENC1')
+  it('等于 MOXENC2（写侧新头）', () => {
+    expect(MAGIC).toBe('MOXENC2')
   })
 })
 
@@ -39,9 +40,9 @@ describe('encryptWithPassword — 密码加密', () => {
     expect(blob.slice(0, MAGIC.length).toString('ascii')).toBe(MAGIC)
   })
 
-  it('输出长度 ≥ MAGIC + salt(16) + iv(12) + tag(16)', () => {
+  it('输出长度 ≥ MAGIC + kdfId(1) + salt(16) + iv(12) + tag(16)', () => {
     const blob = encryptWithPassword(PASSWORD, 'x')
-    expect(blob.length).toBeGreaterThanOrEqual(MAGIC.length + 16 + 12 + 16)
+    expect(blob.length).toBeGreaterThanOrEqual(MAGIC.length + 1 + 16 + 12 + 16)
   })
 
   it('相同密码相同明文 → 密文不同（随机 salt + iv）', () => {
@@ -93,9 +94,9 @@ describe('decryptWithPassword — 密码解密', () => {
   })
 
   it('篡改认证 tag → 抛错', () => {
-    // 格式: MAGIC(7) + salt(16) + iv(12) + tag(16) + ct
+    // 格式: MAGIC(7) + kdfId(1) + salt(16) + iv(12) + tag(16) + ct
     const blob = Buffer.from(encryptWithPassword(PASSWORD, 'secret'))
-    const tagOffset = MAGIC.length + 16 + 12
+    const tagOffset = MAGIC.length + 1 + 16 + 12
     blob.writeUInt8(blob.readUInt8(tagOffset) ^ 0xff, tagOffset)
     expect(() => decryptWithPassword(PASSWORD, blob)).toThrow('密码错误或文件已损坏')
   })
@@ -124,14 +125,16 @@ describe('isEncryptedBlob — 加密 blob 格式校验', () => {
   })
 
   it('长度不足 → false', () => {
-    const short = Buffer.alloc(MAGIC.length + 16 + 12 + 15) // 差 1 字节 tag
+    const short = Buffer.alloc(MAGIC.length + 1 + 16 + 12 + 15) // 差 1 字节 tag
     short.write(MAGIC, 0, 'ascii')
+    short.writeUInt8(KDF_ID_CURRENT, MAGIC.length)
     expect(isEncryptedBlob(short)).toBe(false)
   })
 
   it('长度刚好等于最小值 → true', () => {
-    const min = Buffer.alloc(MAGIC.length + 16 + 12 + 16)
+    const min = Buffer.alloc(MAGIC.length + 1 + 16 + 12 + 16)
     min.write(MAGIC, 0, 'ascii')
+    min.writeUInt8(KDF_ID_CURRENT, MAGIC.length)
     expect(isEncryptedBlob(min)).toBe(true)
   })
 

@@ -11,18 +11,19 @@
 //   "plan": "pro",              // free / pro / enterprise
 //   "features": ["mcp", "agent", "backup", "encryption", "multi-runtime"],
 //   "disk_fingerprint": "",     // 硬盘指纹（SHA-256 前 16 位 hex）；空串 = 不绑定设备
-//   "signature": "base64(RSA-SHA256 签名)"
+//   "signature": "ed25519:<base64(Ed25519 签名)>"  // 新证；历史证为裸 base64(RSA-SHA256)
 // }
 //
 // 验签流程：
 // 1. 解析 license JSON，提取除 signature 外的所有字段（含 disk_fingerprint）
 // 2. 按 key 字典序拼接规范化字符串（与应用内 SIGN_FIELDS、发行侧 issue-license.js 一致）
-// 3. RSA-SHA256 验签（公钥内置）
+// 3. 按签名字段前缀分流：ed25519: → Ed25519 公钥；无前缀 → 历史 RSA-SHA256 公钥。
+//    这是**签名算法版本**，与 payload.version / updates_until 的「许可证格式版本」无关。
 // 4. 检查 expires_at、plan、features
 // 5. disk_fingerprint 非空时与 getDiskFingerprint()（APP_ROOT 所在硬盘）比对
 
-import { createVerify } from 'node:crypto'
-import { PUBLIC_KEY_DER_B64 } from './public-key'
+import { createPrivateKey, createPublicKey, createSign, createVerify, sign, verify } from 'node:crypto'
+import { ED25519_PUBLIC_KEY_B64, PUBLIC_KEY_DER_B64 } from './public-key'
 import { getDiskFingerprint, getDiskFingerprintAsync } from '../steward/hardware'
 import { effectiveUpdatesUntil, raiseUpdatesWatermark } from './updates-watermark'
 import { errMsg } from '../error'
@@ -128,15 +129,38 @@ function canonicalize(payload: LicensePayload): string {
   return parts.join('&')
 }
 
-/** 用 RSA 公钥验签 */
+/**
+ * 新证签名前缀。base64 字符集不含冒号，历史 RSA 裸签名不可能误入 Ed25519 分支；
+ * 反之给 RSA 签名硬加前缀也会在 Ed25519 验签处失败——两版互不串门。
+ */
+export const ED25519_SIGNATURE_PREFIX = 'ed25519:'
+
+/** 按签名版本分流验签：新证 Ed25519（显式前缀），历史证 RSA-SHA256（裸 base64） */
 function verifySignature(signedData: string, signatureB64: string): boolean {
   try {
+    if (typeof signatureB64 !== 'string') return false
+    if (signatureB64.startsWith(ED25519_SIGNATURE_PREFIX)) {
+      // 运维尚未轮换/填入公钥时，新证一律 fail-closed，不悄悄回退到旧 RSA 公钥
+      if (!ED25519_PUBLIC_KEY_B64) return false
+      const pubKey = createPublicKey({
+        key: Buffer.from(ED25519_PUBLIC_KEY_B64, 'base64'),
+        format: 'der',
+        type: 'spki'
+      })
+      if (pubKey.asymmetricKeyType !== 'ed25519') return false
+      return verify(
+        null,
+        Buffer.from(signedData, 'utf8'),
+        pubKey,
+        Buffer.from(signatureB64.slice(ED25519_SIGNATURE_PREFIX.length), 'base64')
+      )
+    }
+
     const pubKey = `-----BEGIN PUBLIC KEY-----\n${PUBLIC_KEY_DER_B64}\n-----END PUBLIC KEY-----`
-    const verify = createVerify('RSA-SHA256')
-    verify.update(signedData)
-    verify.end()
-    const sigBuf = Buffer.from(signatureB64, 'base64')
-    return verify.verify(pubKey, sigBuf)
+    const rsaVerify = createVerify('RSA-SHA256')
+    rsaVerify.update(signedData)
+    rsaVerify.end()
+    return rsaVerify.verify(pubKey, Buffer.from(signatureB64, 'base64'))
   } catch {
     return false
   }
@@ -386,16 +410,26 @@ export class LicenseService {
     }
   }
 
-  /** 生成 license.lic（仅发行侧用，私钥不嵌入应用） */
+  /**
+   * 生成 license.lic（仅发行侧用，私钥不嵌入应用）。
+   * 私钥类型决定签名版本：Ed25519 → 带前缀的新格式；其它（历史 RSA）→ 裸 base64 旧格式。
+   */
   static generateLicense(
     privateKeyPem: string,
     payload: LicensePayload
   ): string {
     const signedData = canonicalize(payload)
-    const sign = require('node:crypto').createSign('RSA-SHA256')
-    sign.update(signedData)
-    sign.end()
-    const signature = sign.sign(privateKeyPem).toString('base64')
+    const privateKey = createPrivateKey(privateKeyPem)
+    let signature: string
+    if (privateKey.asymmetricKeyType === 'ed25519') {
+      signature = ED25519_SIGNATURE_PREFIX +
+        sign(null, Buffer.from(signedData, 'utf8'), privateKey).toString('base64')
+    } else {
+      const rsaSign = createSign('RSA-SHA256')
+      rsaSign.update(signedData)
+      rsaSign.end()
+      signature = rsaSign.sign(privateKeyPem).toString('base64')
+    }
     return JSON.stringify({ ...payload, signature }, null, 2)
   }
 }

@@ -1,6 +1,7 @@
 // Skill 数据访问（技能 = 可复用提示词片段）
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { cachedPrepare } from '../statement-cache'
 import { mustGet } from '../must-get'
 import type { SkillRecord, SkillVersionRecord } from '../../../shared/types'
 
@@ -79,30 +80,37 @@ export type BuiltinSkill = Omit<SkillRecord, 'isBuiltin' | 'createdAt' | 'enable
 
 export const skillRepo = {
   list(): SkillRecord[] {
-    const rows = dbService
-      .getHandle()
-      .prepare('SELECT * FROM skills ORDER BY is_builtin DESC, created_at ASC, rowid ASC')
-      .all() as SkillRow[]
+    const rows = cachedPrepare(
+      dbService.getHandle(),
+      'SELECT * FROM skills ORDER BY is_builtin DESC, created_at ASC, rowid ASC'
+    ).all() as SkillRow[]
     return rows.map(rowToRecord)
   },
 
   get(id: string): SkillRecord | null {
-    const row = dbService
-      .getHandle()
-      .prepare('SELECT * FROM skills WHERE id=?')
-      .get(id) as SkillRow | undefined
+    const row = cachedPrepare(dbService.getHandle(), 'SELECT * FROM skills WHERE id=?').get(id) as
+      | SkillRow
+      | undefined
     return row ? rowToRecord(row) : null
   },
 
   /** 按 id 批量取已启用技能（保持传入顺序，缺失/禁用的自动跳过） */
   listEnabledByIds(ids: string[]): SkillRecord[] {
     if (!ids || ids.length === 0) return []
-    const out: SkillRecord[] = []
-    for (const id of ids) {
-      const s = this.get(id)
-      if (s && s.enabled) out.push(s)
+    // PERF-07：循环单查 → 批量 IN；分页避开 SQLite 变量上限（500 << 32766）
+    const db = dbService.getHandle()
+    const unique = [...new Set(ids)]
+    const byId = new Map<string, SkillRecord>()
+    for (let i = 0; i < unique.length; i += 500) {
+      const batch = unique.slice(i, i + 500)
+      const placeholders = batch.map(() => '?').join(',')
+      const rows = cachedPrepare(
+        db,
+        `SELECT * FROM skills WHERE enabled=1 AND id IN (${placeholders})`
+      ).all(...batch) as SkillRow[]
+      for (const row of rows) byId.set(row.id, rowToRecord(row))
     }
-    return out
+    return ids.map((id) => byId.get(id)).filter((s): s is SkillRecord => !!s)
   },
 
   /** 内置技能同步：以文件为准 upsert（首次插入 / 后续更新内容，保留用户开关状态） */

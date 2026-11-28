@@ -126,8 +126,11 @@ const SRC = fs.readFileSync(FILE, 'utf8')
 const nl = SRC.includes('\r\n') ? '\r\n' : '\n'
 
 describe('§309 ChatModule 会话级迟到响应的身份守卫（源码级闸门）', () => {
-  it('会话级迟到写点恰是 listMessages／getConversationDraft 两处（新增了就得进来判一遍）', () => {
-    expect(scan(SRC).map((s) => s.channel)).toEqual(['getConversationDraft', 'listMessages'])
+  it('会话级迟到写点恰是 listMessages／listMessagePage／getConversationDraft 三处（PERF-04 新增分页写点，身份守卫同口径；新增了就得进来判一遍）', () => {
+    expect(scan(SRC).map((s) => s.channel)).toEqual([
+      'getConversationDraft', 'listMessagePage', 'listMessages'
+    ])
+    expect(scan(SRC).every((s) => s.guarded)).toBe(true)
   })
 
   it('两处都在第一次写会话级 state 之前挡下迟到响应', () => {
@@ -164,7 +167,7 @@ describe('§309 ChatModule 会话级迟到响应的身份守卫（源码级闸�
 
   it('反向对照：新添一处会话级迟到写点时，"恰是两处"那条必须看得见它（防扫描器恒返回两份）', () => {
     const extra = `${SRC}${nl}const __probeSite = (id: string): void => {${nl}  window.pocketai.getConversationPin(id).then((v) => {${nl}    setActiveDraft(v)${nl}  })${nl}}${nl}`
-    expect(scan(extra).map((s) => s.channel), '新站点要进名单，并且按同一判据判成没守卫').toEqual(['getConversationDraft', 'getConversationPin', 'listMessages'])
+    expect(scan(extra).map((s) => s.channel), '新站点要进名单，并且按同一判据判成没守卫').toEqual(['getConversationDraft', 'getConversationPin', 'listMessagePage', 'listMessages'])
     expect(scan(extra).find((s) => s.channel === 'getConversationPin')?.guarded).toBe(false)
   })
 })

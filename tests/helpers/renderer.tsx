@@ -60,6 +60,9 @@ export function stubPocketai(impls: Record<string, Impl> = {}): void {
   // 默认空表：挂 ProviderSettings 的旧用例主体不是工具判定，不该因为多一读就全红；
   // 专门判这条读的用例必须自己覆盖这个键（覆盖后才验证得到失败面）。
   if (!state.impls.has('listToolCapabilities')) state.impls.set('listToolCapabilities', () => [])
+  // PERF-04：首屏满页后滚到顶会触发「加载更早」；默认空一页避免挂载用例因漏 mock 炸掉，
+  // 专门断言分页的用例自行覆盖该键。
+  if (!state.impls.has('listMessagePage')) state.impls.set('listMessagePage', () => ({ messages: [], hasMore: false }))
   // v78：模型级「关闭思考」清单是模型附加菜单挂载即读的固定副作用；默认空清单，
   // 专门断言这条读的用例自己覆盖该键（覆盖后才验证得到"已关闭"那一面）。
   if (!state.impls.has('getAgentThinkingDisabled')) state.impls.set('getAgentThinkingDisabled', () => [])

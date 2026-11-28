@@ -117,7 +117,9 @@ export async function exportConversationAsPng(options: ExportImageOptions): Prom
     const dataUrl = await toPng(el, {
       pixelRatio: 2,
       backgroundColor: getCssVar('--color-bg', '#ffffff'),
-      cacheBust: true
+      // SEC-16-13：cacheBust:true 会给页面里的图片 URL 追加时间戳并重新抓取，
+      // 外域图片借此绕过「首屏不加载」的预期再次向第三方发请求；导出只用当前 DOM 内容
+      cacheBust: false
     })
     const blob = await (await fetch(dataUrl)).blob()
     const url = URL.createObjectURL(blob)

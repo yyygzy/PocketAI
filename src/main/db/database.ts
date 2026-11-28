@@ -1688,6 +1688,14 @@ const MIGRATIONS: Migration[] = [
           VALUES (new.rowid, cjk_spaced(new.content), new.doc_id, new.kb_id, new.id);
       END;
     `
+  },
+  {
+    version: 85,
+    name: 'kb_docs_source_index',
+    // PERF-07：消息附件清理按 source=msg_<id> 精确匹配，此前全表扫 kb_documents。
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_kb_docs_source ON kb_documents(source);
+    `
   }
 ]
 

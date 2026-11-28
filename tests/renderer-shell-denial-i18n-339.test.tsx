@@ -149,8 +149,11 @@ describe('③ 主进程那两句字面与四语覆盖（改味只会悄悄失效
       'BLOCKED_FORKBOMB',
       'BLOCKED_FORMAT',
       'BLOCKED_MKFS',
+      // 遗留技术债收口：SEC-16-05 两条新规则从复用码改为独立码（四语已补）
+      'BLOCKED_RAW_DEVICE',
       'BLOCKED_REG_HIVE',
       'BLOCKED_ROOT_DELETE',
+      'BLOCKED_SHADOW_DELETE',
       'BLOCKED_SHUTDOWN',
       'BLOCKED_SYSTEM_DELETE',
       'SHELL_DISABLED'

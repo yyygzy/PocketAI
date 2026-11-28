@@ -39,6 +39,7 @@ vi.mock('../src/main/db/repositories/kb-doc.repo', () => ({
       return doc
     },
     listAll: () => docs,
+    listIdsBySource: (source: string) => docs.filter((d) => d.source === source).map((d) => d.id),
     delete: (id: string) => {
       docs = docs.filter((d) => d.id !== id)
     }

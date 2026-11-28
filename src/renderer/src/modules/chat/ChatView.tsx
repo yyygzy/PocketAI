@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderRecord, MessageRecord, ChatTarget, ChatAttachment, AssistantRecord, ReminderRepeatRule, UsagePricing, AgentRunIndexEntry, AgentSessionStats, ChatResumeBlockCode, ChatResumeCandidate, RunToolGrant } from '../../../../shared/types'
 import { useI18n } from '../../i18n'
 import { HomeStatusPanel } from '../../components/HomeStatusPanel'
@@ -178,6 +178,12 @@ interface Props {
   messages: MessageRecord[]
   /** A-1：消息区正在加载（切会话后、数据到达前），用骨架替代空态/欢迎语 */
   messagesLoading?: boolean
+  /** PERF-04：还有更早的消息可加载（首屏满一页或上一页 hasMore） */
+  hasOlder?: boolean
+  /** PERF-04：正在加载更早消息（防重复触发） */
+  loadingOlder?: boolean
+  /** PERF-04：滚到顶部时请求更早一页（由 ChatModule 走游标分页 IPC） */
+  onLoadOlder?: () => void
   liveColumns: CompareColumn[] | null
   /** 忙碌态（普通流式由 liveColumns 推出；Agent 模式没有虚拟列，由父级显式传入） */
   streaming?: boolean
@@ -312,6 +318,9 @@ export const ChatView: React.FC<Props> = ({
   onTargetsChange,
   messages,
   messagesLoading = false,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   liveColumns,
   streaming: streamingProp,
   agentMode = false,
@@ -764,6 +773,8 @@ export const ChatView: React.FC<Props> = ({
     onRestoreTurnAnchorApplied?.()
   }, [restoreTurnAnchor, messages, renderedTurns, runsByTurn, virtualizer, onRestoreTurnAnchorApplied])
 
+  /** PERF-04：加载更早前记住滚动高度，prepend 后把视口钉回原来的消息（虚拟列表靠 scrollTop 补偿） */
+  const olderLoadAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null)
   const handleScroll = useCallback(() => {
     const el = scrollBoxRef.current
     if (!el) return
@@ -771,7 +782,20 @@ export const ChatView: React.FC<Props> = ({
     isAtBottomRef.current = near
     setAtBottom(near)
     setShowJumpTop(el.scrollTop > 300)
-  }, [])
+    // 靠近顶部且确认还有更早一页 → 触发一次。loadingOlder 是异步 state，同一帧连续 scroll
+    // 可能来不及更新，故再用 anchor ref 做同步防重入（prepend 后的 layout effect 里清空）。
+    if (el.scrollTop < 48 && hasOlder && !loadingOlder && !olderLoadAnchorRef.current && onLoadOlder) {
+      olderLoadAnchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
+      onLoadOlder()
+    }
+  }, [hasOlder, loadingOlder, onLoadOlder])
+  useLayoutEffect(() => {
+    const anchor = olderLoadAnchorRef.current
+    if (!anchor) return
+    olderLoadAnchorRef.current = null
+    const el = scrollBoxRef.current
+    if (el) el.scrollTop = el.scrollTop + (el.scrollHeight - anchor.scrollHeight)
+  }, [messages.length])
 
   const canSend = targets.length > 0 && targets.every((t) => t.providerId && t.model)
   // P0-4b：首次选中某台模型时自动探一次工具调用能力（3 次请求，计入用户额度）；

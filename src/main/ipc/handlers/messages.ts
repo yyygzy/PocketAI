@@ -50,6 +50,17 @@ export function registerMessageHandlers(): void {
   safeHandle(IPC.MESSAGE_LIST, (_e, conversationId: string) =>
     messageRepo.listByConversation(conversationId),
   argsSchema(idSchema))
+  // PERF-04：游标分页（向更早加载）。beforeTs=null/省略取最近 limit 条；多取一条判 hasMore。
+  // 不变式：返回 ASC 顺序与 MESSAGE_LIST 同构，渲染层 prepend 后不会打乱消息序。
+  safeHandle(IPC.MESSAGE_LIST_PAGE, (_e, conversationId: string, beforeTs?: number | null, limit?: number) => {
+    const size = Math.min(1000, Math.max(1, Math.floor(limit ?? 200)))
+    const rows = messageRepo.listByConversation(conversationId, {
+      limit: size + 1,
+      ...(beforeTs !== undefined && beforeTs !== null ? { beforeTs } : {})
+    })
+    const hasMore = rows.length > size
+    return { messages: hasMore ? rows.slice(0, size) : rows, hasMore }
+  }, argsSchema(idSchema, z.number().int().positive().nullable().optional(), z.number().int().min(1).max(1000).optional()))
   safeHandle(IPC.MESSAGE_DELETE, (_e, id: string) => {
     messageRepo.delete(id)
     // 消息附件曾异步入库到 KB（source=msg_<id>）：消息没了也要清掉那份副本，否则仍被检索命中

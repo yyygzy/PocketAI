@@ -49,10 +49,12 @@ describe('classifyCommand（SEC-16-05 deny-list 补齐）', () => {
     it('fsutil setZeroData → deny', () => {
       const v = classifyCommand('fsutil file setZeroData c:', WS)
       expect(v.decision).toBe('deny')
+      expect(v.reason).toBe('BLOCKED_RAW_DEVICE')
     })
     it('vssadmin delete shadows → deny', () => {
       const v = classifyCommand('vssadmin delete shadows /all /quiet', WS)
       expect(v.decision).toBe('deny')
+      expect(v.reason).toBe('BLOCKED_SHADOW_DELETE')
     })
     it('wipefs / shred / blkdiscard → deny', () => {
       expect(classifyCommand('wipefs /dev/sda', WS).decision).toBe('deny')

@@ -2,7 +2,7 @@
 // 聚合 内置工具 + MCP 工具，按助手 toolPermissions 过滤；提供统一执行入口
 
 import { BUILTIN_TOOLS } from './builtin'
-import type { ToolAgentContext, ToolClassification } from './builtin'
+import type { BuiltinTool, ToolAgentContext, ToolClassification } from './builtin'
 import { getFsTools } from './fs-tools'
 import { getPatchTools } from './patch-tools'
 import { getRunTestsTools } from './run-tests'
@@ -113,7 +113,58 @@ interface BuiltinToolLike {
   policyReason?: ToolPolicyReasonCode
 }
 
+/** 一次工具面重建的产物：只读快照，帧内可被多次访问共享 */
+interface ToolIndex {
+  builtin: BuiltinTool[]
+  builtinSchemas: ToolSchema[]
+  mcpSchemas: ToolSchema[]
+  tools: ToolSchema[]
+  byName: Map<string, ToolSchema>
+  builtinById: Map<string, BuiltinTool>
+}
+
 class ToolRegistry {
+  /**
+   * PERF-10：工具面帧缓存。
+   *
+   * 只在 Agent 一轮 run 内开启（`engine.run()` 入口 `beginFrame()` / 退出 `endFrame()`，
+   * depth 计数支持委派嵌套）。帧内 N 条工具调用的 classify / getSchema / execute
+   * 共用同一份只读快照，buildIndex 从 2N+2 次降为 1 次；帧外仍保持「每次访问重建」的
+   * 旧语义，策略屏／面板试运行等旁路不会被一份长期快照卡住。
+   *
+   * 与 SEC-29 那次「单次构建 + 两张 Map」的边界：那次收口的是**一次构建内部**不重复取
+   * 内置清单，本次收口的是**一轮 run 内**不重复构建；索引本身仍不含任何凭据明文
+   * （MCP 的 env/headers 只在 manager 里，缓存里只有 ToolSchema），不写日志、不落盘。
+   */
+  private frameDepth = 0
+  private frameIndex: ToolIndex | null = null
+  /** 失效代数：每次 invalidate 递增，帧缓存带代数，避免异步回调里读到刚作废的快照 */
+  private indexEpoch = 0
+  private frameIndexEpoch = -1
+
+  /** 进入一帧（可嵌套；只有最外层进入时才清掉上一帧可能残留的快照） */
+  beginFrame(): void {
+    if (this.frameDepth++ === 0) {
+      this.frameIndex = null
+      this.frameIndexEpoch = -1
+    }
+  }
+
+  /** 退出一帧；最外层退出即丢弃快照——工作目录／shell 策略等变更最多影响当前帧 */
+  endFrame(): void {
+    if (this.frameDepth === 0) return
+    if (--this.frameDepth === 0) {
+      this.frameIndex = null
+      this.frameIndexEpoch = -1
+    }
+  }
+
+  /** 显式失效：MCP 服务器增删改、启停、工具权限变化后调用；帧内下一次访问立即重建 */
+  invalidate(): void {
+    this.indexEpoch++
+    this.frameIndex = null
+    this.frameIndexEpoch = -1
+  }
   /** 所有内置工具（含按配置动态注册的 fs.* / shell.exec 工具） */
   private listBuiltinTools() {
     return [
@@ -148,17 +199,31 @@ class ToolRegistry {
   }
 
   /**
-   * 一次构建出「工具面 + 两张索引」。
+   * 取当前工具面索引：帧内复用同一份快照，帧外每次重建（见帧缓存字段的注释）。
+   * 失效后 indexEpoch 变化 / 帧结束清引用，都不会把旧快照再交出去。
+   */
+  private buildIndex(): ToolIndex {
+    if (this.frameDepth > 0 && this.frameIndex && this.frameIndexEpoch === this.indexEpoch) {
+      return this.frameIndex
+    }
+    const index = this.computeIndex()
+    if (this.frameDepth > 0) {
+      this.frameIndex = index
+      this.frameIndexEpoch = this.indexEpoch
+    }
+    return index
+  }
+
+  /**
+   * 一次构建出「工具面 + 两张索引」（SEC-29 零风险项的成本收口，本文件不改其等价性）。
    *
    * 为什么收口成一处：listAll / getSchema / classify / execute / 策略屏此前各自重建，
    * 而 listAll 里 `listBuiltin()` 还被调了两遍（一次拼前置、一次传给改名器），
    * 每遍都要读工作目录与终端策略（SQLite 点查）、MCP 段还要逐行解密 env/headers（SEC-11）。
    * 这里只算一次，并把 name→schema、id→内置实现两张表一并建好，
    * 使原来的线性 find（classify/execute 里还各多一次内置重扫）变成 O(1)。
-   * 仍然「每次调用重建」，不做缓存——失效点（MCP 启停、工作目录/终端策略变化）太多，
-   * 快照过期会让审批与执行看到不同的工具面（SEC-29 只做零风险项，见 perf 打点）。
    */
-  private buildIndex() {
+  private computeIndex(): ToolIndex {
     const startedAt = performance.now()
     const builtin = this.listBuiltinTools()
     const builtinSchemas = builtin.map((t) => t.schema)
@@ -570,3 +635,13 @@ function safeJsonStringify(v: unknown): string {
 }
 
 export const toolRegistry = new ToolRegistry()
+
+/**
+ * PERF-10 失效路径①：MCP 运行态变化。
+ * 启动/停止/崩溃自动重启/对账摘除都会改 `runtime.tools`，其中自动重启与 WebDAV 合并后的
+ * reconcile 不经过 MCP IPC handler，只能从 manager 的状态事件统一收口；事件里不带 env/headers
+ * 明文，回调只递增代数、不缓存凭据。守卫 `typeof` 是为了兼容只加载本模块纯函数的测试桩。
+ */
+if (typeof mcpManager.onStatus === 'function') {
+  mcpManager.onStatus(() => toolRegistry.invalidate())
+}

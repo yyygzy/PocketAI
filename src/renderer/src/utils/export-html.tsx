@@ -11,7 +11,13 @@ import type { KbAskMessage, MessageRecord, MessageSource } from '../../../shared
 import type { ExportConversationMeta, ExportKbAskSessionMeta } from '../../../shared/export-markdown'
 import { formatAttachments, roleLabel } from '../../../shared/export-markdown'
 import { Markdown } from '../modules/chat/Markdown'
+import { safeHttpHref } from './external-url'
 // react-dom/server 体积可观，动态 import 拆为独立 chunk——仅导出 HTML 时加载，不回退主包瘦身成果
+
+// SEC-16-12/13：导出物是脱离应用的独立 file:// 文档，没有主进程 CSP 兜底。
+// 自带 meta CSP：禁脚本/插件/表单与一切外部加载；图片只允许内嵌 data:/blob:，
+// 远程图片不加载（不泄漏打开者 IP/Referer），内联 style 供下方排版使用。
+const EXPORT_CSP = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'"
 
 // 导出/打印共用的基础样式：artifact-pdf 会在这份基础上叠「打印补丁」（见 artifact-pdf.ts）
 export const EXPORT_STYLE = `
@@ -128,15 +134,19 @@ function MessageView({ msg }: { msg: MessageRecord }): React.ReactElement {
         <>
           <div className="sources"><strong>参考来源：</strong></div>
           <ol className="sources">
-            {sources.map((s, i) => (
-              <li key={i}>
-                {s.kind === 'web' && s.url ? (
-                  <a href={s.url} target="_blank" rel="noreferrer">{s.docTitle}</a>
-                ) : (
-                  s.docTitle
-                )}
-              </li>
-            ))}
+            {sources.map((s, i) => {
+              // SEC-16-12：导出 HTML 不经过应用内的链接白名单，javascript:/data:/file: 一律降级纯文本
+              const href = s.kind === 'web' ? safeHttpHref(s.url) : null
+              return (
+                <li key={i}>
+                  {href ? (
+                    <a href={href} target="_blank" rel="noreferrer">{s.docTitle}</a>
+                  ) : (
+                    s.docTitle
+                  )}
+                </li>
+              )
+            })}
           </ol>
         </>
       )}
@@ -165,6 +175,7 @@ export async function buildConversationHtml(
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta httpEquiv="Content-Security-Policy" content={EXPORT_CSP} />
         <title>{conv.title}</title>
         <style>{EXPORT_STYLE}</style>
       </head>
@@ -203,15 +214,19 @@ function KbAskMessageView({ msg }: { msg: KbAskMessage }): React.ReactElement {
         <>
           <div className="sources"><strong>参考来源：</strong></div>
           <ol className="sources">
-            {sources.map((s, i) => (
-              <li key={i}>
-                {s.kind === 'web' && s.url ? (
-                  <a href={s.url} target="_blank" rel="noreferrer">{s.docTitle}</a>
-                ) : (
-                  s.docTitle
-                )}
-              </li>
-            ))}
+            {sources.map((s, i) => {
+              // SEC-16-12：导出 HTML 不经过应用内的链接白名单，javascript:/data:/file: 一律降级纯文本
+              const href = s.kind === 'web' ? safeHttpHref(s.url) : null
+              return (
+                <li key={i}>
+                  {href ? (
+                    <a href={href} target="_blank" rel="noreferrer">{s.docTitle}</a>
+                  ) : (
+                    s.docTitle
+                  )}
+                </li>
+              )
+            })}
           </ol>
         </>
       )}
@@ -233,6 +248,7 @@ export async function buildKbAskSessionHtml(
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta httpEquiv="Content-Security-Policy" content={EXPORT_CSP} />
         <title>{session.title}</title>
         <style>{EXPORT_STYLE}</style>
       </head>

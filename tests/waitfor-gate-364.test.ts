@@ -652,6 +652,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       // 与「超长名称不落库」两条新用例里的门；上限＝现数 22，不留余量。
       'tests/runbook-panel.test.tsx': 22,
       'tests/sandbox-meta-envelope-326.test.tsx': 13,
+      // SEC-16-14：DOMPurify 净化后用一次 waitFor 等异步 mermaid 渲染落地再断言 SVG 无危险节点；
+      // 上限＝现数 1，不留余量。
+      'tests/sec-16-14-mermaid-dompurify.test.tsx': 1,
       'tests/search-late-response-353.test.tsx': 8,
       'tests/settings-enc-copy-344.test.tsx': 1,
       'tests/settings-license-copy-346.test.tsx': 3,

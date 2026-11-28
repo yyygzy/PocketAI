@@ -46,9 +46,9 @@ beforeEach(() => {
 })
 
 describe('normalizeRecoveryCode — 规整用户输入', () => {
-  it('去横线/空格 + 大写（normalize 不做字符替换，原样保留）', () => {
-    // 输入字母 a-q（不含 i），原样大写，去横线/空格
-    expect(normalizeRecoveryCode('abcd-efgh-jklm-nopq')).toBe('ABCDEFGHJKLMNOPQ')
+  it('去横线/空格 + 大写 + Crockford 容错映射（I/L→1、O→0、U→V）', () => {
+    // L→1、O→0 按 Crockford 容错表映射；其余合法字符原样大写，去横线/空格
+    expect(normalizeRecoveryCode('abcd-efgh-jklm-nopq')).toBe('ABCDEFGHJK1MN0PQ')
     expect(normalizeRecoveryCode('  ab cd  ef  ')).toBe('ABCDEF')
   })
 

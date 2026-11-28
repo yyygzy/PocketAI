@@ -28,7 +28,7 @@ import {
   mcpSitePolicySchema
 } from '../../../shared/schemas/mcp'
 import { idSchema } from '../../../shared/schemas/providers'
-import { stringifyMcpResult, mcpResultIsError } from '../../tools/registry'
+import { stringifyMcpResult, mcpResultIsError, toolRegistry } from '../../tools/registry'
 import { buildMcpExportPayload } from '../../../shared/mcp-export'
 import { buildMcpPackageFile, MCP_MAX_IMPORT_BYTES } from '../../mcp/mcp-package'
 import { importMcpPackageText } from '../../mcp/mcp-import-service'
@@ -44,6 +44,21 @@ import {
 import type { McpServerRuntime } from '../../../shared/types'
 
 const log = createLogger('mcp')
+
+/**
+ * PERF-10：工具面失效是**性能优化的可选副作用**，不能改变 IPC 的业务结果。
+ * 真机上 toolRegistry 一定在；只验桥接形状的测试会把 registry 桩成仅含两个纯函数，
+ * 那时访问 toolRegistry 会抛 TypeError——fail-open，让「删库成功」的语义原样返回。
+ * 真机若失效本身抛错也同理吞掉：最坏情况是当前帧沿用旧工具面，帧结束即清，
+ * 而 mcpManager 的状态事件还会再兜一次失效。
+ */
+function invalidateToolSurface(): void {
+  try {
+    toolRegistry.invalidate()
+  } catch {
+    // 故意静默：失效失败既不回滚写库，也不把 {ok:true} 改成 {ok:false}
+  }
+}
 
 // 凭据收口：env/headers 出 IPC 一律掩码（列表/表单/运行时状态都带完整 record）。
 // 需要查看或编辑真实值时由用户显式走 MCP_SERVER_REVEAL_SECRETS；
@@ -125,13 +140,17 @@ export function registerMcpHandlers(): void {
     if (fs.statSync(file).size > MCP_MAX_IMPORT_BYTES) {
       return { ok: false as const, error: 'FILE_TOO_LARGE' }
     }
-    return importMcpPackageText(fs.readFileSync(file, 'utf8'))
+    const result = importMcpPackageText(fs.readFileSync(file, 'utf8'))
+    invalidateToolSurface() // PERF-10：整批导入直接写库，不经过 MCP_SERVER_SAVE
+    return result
   })
 
   // 粘贴导入：没有文件包 ⇒ 校验和按 absent；解析、同名并存、凭据清空与文件通道走同一条路径
   safeHandle(IPC.MCP_SERVER_IMPORT_TEXT, async (_e, text: string) => {
     if (typeof text !== 'string' || !text.trim()) return { ok: false as const, error: 'IMPORT_EMPTY' }
-    return importMcpPackageText(text, { verifyChecksum: false })
+    const result = importMcpPackageText(text, { verifyChecksum: false })
+    invalidateToolSurface() // PERF-10：同文件导入通道
+    return result
   })
 
   safeHandle(IPC.MCP_SERVER_GET, (_e, id: string) => {
@@ -162,9 +181,12 @@ export function registerMcpHandlers(): void {
     if (!rec) return { ok: false as const, error: 'MCP Server 不存在' }
     return { ok: true as const, env: rec.env, headers: rec.headers }
   }, argsSchema(idSchema, z.string()))
-  safeHandle(IPC.MCP_SERVER_SAVE, (_e, record: Partial<McpServerRecord> & { name: string }) =>
-    maskMcpRecord(mcpServerRepo.save(record)),
-  argsSchema(mcpServerSaveSchema))
+  // PERF-10 失效路径②：增删改会改变 MCP 工具面（名称/描述/参数/权限），落库后立即作废帧缓存
+  safeHandle(IPC.MCP_SERVER_SAVE, (_e, record: Partial<McpServerRecord> & { name: string }) => {
+    const saved = mcpServerRepo.save(record)
+    invalidateToolSurface()
+    return maskMcpRecord(saved)
+  }, argsSchema(mcpServerSaveSchema))
   safeHandle(IPC.MCP_SERVER_DELETE, async (_e, id: string) =>
     // 与安装整段（含前置 stop）共用 per-server 操作锁：安装/重装进行中删除一律拒绝，
     // 避免 pip 进程树占用 venv 造成孤儿目录或静默重建
@@ -182,6 +204,8 @@ export function registerMcpHandlers(): void {
         warning = `配置已删除，但虚拟环境目录清理失败：${errMsg(e)}`
       }
       mcpServerRepo.delete(id)
+      // PERF-10：Server 删除后其工具必须从工具面消失（forget 的状态事件也会作废，这里显式兜底）
+      invalidateToolSurface()
       // v78：删除连接器时一并清除 OAuth 行，避免 token 遗留；等待中的授权也取消
       try {
         const oauth = await getOAuthService()
@@ -199,17 +223,20 @@ export function registerMcpHandlers(): void {
   safeHandle(IPC.MCP_SERVER_START, async (_e, id: string) => {
     const runtime = await mcpManager.start(id)
     mcpServerRepo.setAutoConnect(id, true)
+    invalidateToolSurface() // PERF-10：新工具进入工具面
     return { ok: true as const, runtime: maskRuntime(runtime) }
   }, argsSchema(idSchema))
   // 显式停止 ⇒ 取消自动恢复（用户看到的是「关掉了」，重启后不应该又自己连上）
   safeHandle(IPC.MCP_SERVER_STOP, async (_e, id: string) => {
     await mcpManager.stop(id)
     mcpServerRepo.setAutoConnect(id, false)
+    invalidateToolSurface() // PERF-10：工具面少一批工具
     return { ok: true }
   }, argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_RESTART, async (_e, id: string) => {
     const runtime = await mcpManager.restart(id)
     mcpServerRepo.setAutoConnect(id, true)
+    invalidateToolSurface() // PERF-10：tools/list 可能换了一批工具
     return { ok: true as const, runtime: maskRuntime(runtime) }
   }, argsSchema(idSchema))
   safeHandle(IPC.MCP_SERVER_LIST_TOOLS, async (_e, id: string) => ({

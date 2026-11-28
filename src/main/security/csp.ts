@@ -14,8 +14,10 @@ const PROD_CSP = [
   "script-src 'self'",
   // React style={{}} 属性与动态注入的 <style>（自定义外观）需要 inline style
   "style-src 'self' 'unsafe-inline'",
-  // 附件经 IPC 以 data:/blob: 展示；Markdown 远程图片允许 https:
-  "img-src 'self' data: blob: https:",
+  // SEC-16-13：附件经 IPC 以 data:/blob: 展示；LLM markdown 里的外域图片一律不加载
+  // （不再放行 https:），避免渲染即向第三方泄漏出口 IP/UA/Referer。离线优先产品，
+  // 远程图片默认不可见；用户仍可手动打开正文里的 http(s) 链接。
+  "img-src 'self' data: blob:",
   "font-src 'self' data:",
   "media-src 'self' data: blob: https:",
   // 一切网络请求都经主进程（provider/搜索/抓取），渲染层不直接联网

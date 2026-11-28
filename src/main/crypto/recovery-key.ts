@@ -26,10 +26,11 @@ const RAW_LEN = 20 // 恢复码随机字节数（160bit）
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const DECODE_MAP: Record<string, number> = {}
 for (let i = 0; i < ALPHABET.length; i++) DECODE_MAP[ALPHABET[i] ?? ''] = i
-// 常见看错/打错容错：I/L → 1，O → 0
+// Crockford 容错映射：I/L → 1，O → 0，U → V（防手滑）
 DECODE_MAP['I'] = DECODE_MAP['1'] ?? 0
 DECODE_MAP['L'] = DECODE_MAP['1'] ?? 0
 DECODE_MAP['O'] = DECODE_MAP['0'] ?? 0
+DECODE_MAP['U'] = DECODE_MAP['V'] ?? 0
 
 /** 字节 → Crockford Base32 字符串 */
 function base32Encode(buf: Buffer): string {
@@ -48,11 +49,21 @@ function base32Encode(buf: Buffer): string {
   return out
 }
 
-/** 规整用户输入：去分隔符/空白、大写、容错映射 */
+/**
+ * 规整用户输入：去分隔符/空白、大写，再按 Crockford 容错表映射。
+ * I/L→1、O→0、U→V；字母表内的正确字符映射回自身，旧的正确码逐字不变。
+ * 非法字符（如 !）不在表内，原样保留 → 后续长度/解密校验仍会拒绝。
+ */
 export function normalizeRecoveryCode(input: string): string {
   return input
     .toUpperCase()
     .replace(/[\s-]+/g, '')
+    .split('')
+    .map((ch) => {
+      const idx = DECODE_MAP[ch]
+      return idx === undefined ? ch : ALPHABET[idx] ?? ch
+    })
+    .join('')
 }
 
 /** 生成新恢复码（返回带分隔符的展示形式 XXXX-XXXX-...，8 组） */

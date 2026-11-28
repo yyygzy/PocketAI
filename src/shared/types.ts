@@ -3256,6 +3256,9 @@ export const IPC = {
   WINDOW_BEHAVIOR_SET_CLOSE_TO_TRAY: 'window-behavior:set-close-to-tray', // 设置关窗最小化到托盘
 
   MESSAGE_LIST: 'message:list',
+  // PERF-04：消息游标分页（向更早加载）。入参 (conversationId, limit, beforeTs)，
+  // beforeTs=null 取最近 limit 条；返回 ASC 顺序、hasMore 标记。
+  MESSAGE_LIST_PAGE: 'message:list-page',
   MESSAGE_DELETE: 'message:delete',
   MESSAGE_DELETE_BATCH: 'message:delete-batch', // 批量删除：单 IPC 删除多条消息（上限 500）
   MESSAGE_TRUNCATE_FROM: 'message:truncate-from', // 截断重跑：删除目标消息及其后全部消息

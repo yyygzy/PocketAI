@@ -11,6 +11,7 @@ import { useI18n } from '../../i18n'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { parseCodeProps, countCodeLines, isCollapsible, CODE_PREVIEW_LINES, type ParsedCodeBlock } from '../../utils/code-block'
 import { codeCollapseLines, subscribeCodeCollapse } from '../../code-collapse'
+import { safeHttpHref } from '../../utils/external-url'
 
 // katex 懒加载（主包瘦身 ~280KB）：rehype-katex + katex.min.css 均为动态 import，
 // 模块图不再静态包含。ready 前公式以原始 LaTeX 文本渲染，ready 后重渲染为公式；
@@ -30,7 +31,9 @@ function ensureKatex(): Promise<void> {
 // 链接/图片协议白名单：react-markdown 默认会编码危险协议，这里再显式兜底，
 // 防止依赖库行为变化放行 javascript:/vbscript:/file:/data:text/html 等。
 const SAFE_NAV_HREF = /^(https?:|mailto:)/i
-const SAFE_IMG_SRC = /^(https?:|data:image\/|blob:)/i
+// SEC-16-13：离线优先产品，图片只认内嵌 data:image/ 与 blob:。远程 http(s) 源
+// 在渲染阶段硬拦（不发任何跨域请求，开发模式同样成立），降级为文本/链接占位。
+const SAFE_IMG_SRC = /^(data:image\/|blob:)/i
 
 /**
  * URL 收口（react-markdown v10 的 defaultUrlTransform 只放行
@@ -88,8 +91,31 @@ const BASE_COMPONENTS: Components = {
     )
   },
   img: ({ node, src, alt, ...props }) => {
-    if (!src || !SAFE_IMG_SRC.test(src)) return null
-    return <img {...props} src={src} alt={alt ?? ''} className="max-w-full rounded-lg my-2" />
+    if (!src || !SAFE_IMG_SRC.test(src)) {
+      // SEC-16-13：外域/危险协议都不产出 <img>，渲染阶段即无跨域请求。
+      // 仅 http(s) 源给一个可点链接（用户主动点击才导航），其余降级为纯文本；
+      // 文案不硬编码：链接文字就是模型给的 alt（未给时用中性占位符）。
+      const label = alt || '[image]'
+      const href = safeHttpHref(src)
+      return href ? (
+        <a href={href} target="_blank" rel="noreferrer" className="text-[var(--color-accent)] underline">
+          {label}
+        </a>
+      ) : (
+        <span className="text-[var(--color-text-muted)]">{label}</span>
+      )
+    }
+    // 内嵌图片：no-referrer + lazy 兜底（CSP img-src 同样只放行 data:/blob:）
+    return (
+      <img
+        {...props}
+        src={src}
+        alt={alt ?? ''}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        className="max-w-full rounded-lg my-2"
+      />
+    )
   },
   pre: PRE_WITH_COPY,
   code: ({ className, children, ...props }) => (

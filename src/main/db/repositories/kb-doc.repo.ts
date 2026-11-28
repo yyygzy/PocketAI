@@ -1,6 +1,7 @@
 // 知识库文档数据访问
 import { randomUUID } from 'node:crypto'
 import { dbService } from '../database'
+import { cachedPrepare } from '../statement-cache'
 import { mustGet } from '../must-get'
 import { kbChunkRepo } from './kb-chunk.repo'
 import { resolveSharedPath, serializeSharedPath } from '../../portable-paths'
@@ -54,6 +55,15 @@ export const kbDocRepo = {
       .prepare('SELECT * FROM kb_documents ORDER BY created_at DESC')
       .all() as KbDocRow[]
     return rows.map(rowToRecord)
+  },
+
+  /** PERF-07：按 source 精确取 id（走 v85 的 idx_kb_docs_source），避免删消息时全表扫文档 */
+  listIdsBySource(source: string): string[] {
+    const rows = cachedPrepare(
+      dbService.getHandle(),
+      'SELECT id FROM kb_documents WHERE source=?'
+    ).all(source) as Array<{ id: string }>
+    return rows.map((r) => r.id)
   },
 
   get(id: string): KbDocument | null {

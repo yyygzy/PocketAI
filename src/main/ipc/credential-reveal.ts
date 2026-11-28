@@ -14,11 +14,10 @@ import { randomBytes } from 'node:crypto'
 import type { SecurityEventKind } from '../db/repositories/security-event.repo'
 
 /**
- * SEC-16-11 的审计 kind。security-event.repo 的 SecurityEventKind 联合目前只登记了
- * 加密开关两个值（repo 分区约定只读，本次未并入新值）；表列本身是自由 TEXT 无 schema 约束，
- * 这里用断言登记新 kind，待 repo 侧统一收编。
+ * SEC-16-11 的审计 kind。已由 security-event.repo 的 SecurityEventKind 联合正式收编，
+ * 这里保留常量供 handlers 与测试共用同一个字面量（不再靠 as 断言绕过类型）。
  */
-export const CREDENTIAL_REVEAL_KIND = 'credential_reveal' as SecurityEventKind
+export const CREDENTIAL_REVEAL_KIND: SecurityEventKind = 'credential_reveal'
 
 const TOKEN_TTL_MS = 60_000
 const COOLDOWN_MS = 60_000

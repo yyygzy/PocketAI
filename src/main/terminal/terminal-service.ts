@@ -22,7 +22,7 @@ import { errMsg } from '../error'
 import { classifyTerminalCommand } from '../tools/shell-tools'
 import { getWorkspaceDir } from '../tools/fs-tools'
 import { capLogString } from '../security/log-redact'
-import { securityEventRepo, type SecurityEventKind } from '../db/repositories/security-event.repo'
+import { securityEventRepo } from '../db/repositories/security-event.repo'
 import { lockService } from '../lock/lock'
 import { APP_ROOT } from '../portable'
 import { createLogger } from '../logger'
@@ -146,14 +146,12 @@ const MAX_AUDIT_CMD_CHARS = 500
  * 因此用其 capLogString 做「先截断」这一层；append 内部自带 fail-open（写失败只记日志不阻断），
  * 审计不可用不能把用户卡在终端外。
  *
- * kind 的类型注记：securityEventRepo 的 SecurityEventKind 联合还没扩 terminal_command
- * （repo 在本次改动分区外，禁改）；security_events 表的 kind 列是 TEXT 无 CHECK 约束，
- * 运行时无碍，扩类型时把这里的双断言换掉即可。
+ * kind 已由 securityEventRepo 的 SecurityEventKind 联合正式收编，无需断言绕过类型。
  */
 export function auditTerminalCommand(ownerId: number, raw: string, blocked: string | null): void {
   const cmd = capLogString(String(raw ?? '').trim(), MAX_AUDIT_CMD_CHARS)
   securityEventRepo.append({
-    kind: 'terminal_command' as unknown as SecurityEventKind,
+    kind: 'terminal_command',
     message: blocked ? `终端命令被安全策略拦截（${blocked}）：${cmd}` : `终端命令：${cmd}`,
     detail: { ownerId, blocked: blocked ?? null }
   })

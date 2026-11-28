@@ -496,6 +496,13 @@ const api = {
   // ---------- 消息 ----------
   listMessages: (conversationId: string): Promise<MessageRecord[]> =>
     ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
+  // PERF-04：游标分页（向更早加载）；hasMore=false 时停止继续请求
+  listMessagePage: (
+    conversationId: string,
+    beforeTs?: number | null,
+    limit?: number
+  ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> =>
+    ipcRenderer.invoke(IPC.MESSAGE_LIST_PAGE, conversationId, beforeTs ?? null, limit),
   deleteMessage: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.MESSAGE_DELETE, id),
   deleteMessagesBatch: (ids: string[]): Promise<{ ok: boolean; deleted: number }> =>

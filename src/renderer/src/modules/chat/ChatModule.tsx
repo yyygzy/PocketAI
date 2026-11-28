@@ -100,6 +100,13 @@ export const ChatModule: React.FC = () => {
   const [messagesConvId, setMessagesConvId] = useState<string | null>(null)
   const messagesConvIdRef = useRef<string | null>(null)
   const [messagesState, setMessagesState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  /**
+   * PERF-04：首屏仍走 MESSAGE_LIST（保持 §309 闸门与全部挂载用例的桩不变），
+   * 「加载更早」才走游标分页。hasOlder 由首屏条数是否触顶决定，loadOlder 返回是否还有更早。
+   */
+  const [hasOlder, setHasOlder] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const PAGE_SIZE = 200
   /** P2：run 索引刷新令牌——`onStreamsSettled` 主动 +1，跑完一轮数字才不会停在上一轮 */
   const [runsRefresh, setRunsRefresh] = useState(0)
   /** P2：刚跑完的那一轮 requestId（done 时下传 ChatView，聚焦该轮摘要） */
@@ -314,6 +321,8 @@ export const ChatModule: React.FC = () => {
           }
           setMsgsReadErr(null)
           setMessages(v)
+          // PERF-04：首屏正好满一页时认为可能还有更早的（多一发的代价换来不漏历史）
+          setHasOlder(v.length >= PAGE_SIZE)
           setMessagesState('ready')
         })
         .catch((e) => {
@@ -325,6 +334,38 @@ export const ChatModule: React.FC = () => {
     },
     [t, currentConvRef]
   )
+
+  /**
+   * PERF-04：向更早翻页。beforeTs 取当前最早一条的 created_at，返回按 created_at ASC 的
+   * 早一页消息；prepend 后去重（同 created_at 的边界消息可能两页都命中），并带身份守卫
+   * （§309 同口径：迟到响应不能画进切换后的会话）。
+   */
+  const loadOlder = useCallback(() => {
+    const convId = currentConvRef.current
+    if (!convId || !hasOlder || loadingOlder) return
+    const oldestTs = messagesRef.current[0]?.createdAt
+    if (oldestTs === undefined) return
+    setLoadingOlder(true)
+    return window.pocketai
+      .listMessagePage(convId, oldestTs, PAGE_SIZE)
+      .then((v) => {
+        if (currentConvRef.current !== convId) return
+        if (hasIpcFailed(v)) {
+          reportIpcError('chat.listMessagePage')(v)
+          setHasOlder(false)
+          return
+        }
+        setMessages((prev) => {
+          if (currentConvRef.current !== convId) return prev
+          const seen = new Set(prev.map((m) => m.id))
+          const older = v.messages.filter((m) => !seen.has(m.id))
+          return [...older, ...prev]
+        })
+        setHasOlder(v.hasMore)
+      })
+      .catch(reportIpcError('chat.listMessagePage'))
+      .finally(() => setLoadingOlder(false))
+  }, [currentConvRef, hasOlder, loadingOlder])
 
   const reloadAssistants = useCallback(() => {
     return window.pocketai.listAssistants('mine').then((v) => {
@@ -2194,6 +2235,9 @@ export const ChatModule: React.FC = () => {
         onTargetsChange={handleTargetsChange}
         messages={visibleMessages}
         messagesLoading={messagesLoading}
+        hasOlder={hasOlder}
+        loadingOlder={loadingOlder}
+        onLoadOlder={loadOlder}
         liveColumns={liveColumns}
         streaming={liveColumns !== null || agentRunning}
         agentMode={agentMode}

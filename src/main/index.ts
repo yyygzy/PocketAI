@@ -84,6 +84,9 @@ import { initTaskScheduler } from './backup/task-scheduler'
 import { initReminderScheduler } from './reminder/scheduler'
 import { applyOpacityToMainWindows, awaitRendererTheme, hasStoredUiTheme, MAIN_WINDOW_MARKER, markThemedWindow, syncNativeTheme, titlebarOverlayFor, windowBackground, type MarkedBrowserWindow } from './ui-preferences'
 import { beginQuit, isCleanupDone, isQuitting, runCleanupOnce, runFallbackCleanup } from './quit-manager'
+// SEC-16-04 遗留收口：窗口隐藏/最小化即终止终端子进程树——不依赖隐私锁是否开启
+// （lockService.onAppHidden 只在 autoLockTimeout>0 时才进 locked，未开自动锁时无事件可订阅）。
+import { killAllTerminals } from './terminal/terminal-service'
 import { createLogger, configureLogDir } from './logger'
 import { bootMark } from './steward/boot-perf'
 import { sweepStaleProfileCaches } from './steward/stale-cache-sweep'
@@ -235,9 +238,17 @@ function createMainWindow(): void {
   // A-3：切主题时主窗口底色跟着变（与独立窗口同一标记口径）
   markThemedWindow(mainWindow)
   // 隐私锁：窗口隐藏/最小化 → 计时；重新显示 → 取消计时
-  mainWindow.on('hide', () => lockService.onAppHidden())
+  // SEC-16-04：隐藏即杀终端会话（即使未开自动锁屏，终端子进程也不在前台之外继续跑）；
+  // 与锁屏钩子的 killAllTerminals 是同一入口，重复调用幂等。
+  mainWindow.on('hide', () => {
+    try { killAllTerminals() } catch { /* 清理失败不阻断隐藏 */ }
+    lockService.onAppHidden()
+  })
   mainWindow.on('show', () => lockService.onAppShown())
-  mainWindow.on('minimize', () => lockService.onAppHidden())
+  mainWindow.on('minimize', () => {
+    try { killAllTerminals() } catch { /* 同上 */ }
+    lockService.onAppHidden()
+  })
   mainWindow.on('restore', () => lockService.onAppShown())
 
   // 硬件画像：首帧之后 1.5s 再采（PowerShell 冷启动 + CIM 查询在真机上可占 8–30s）。

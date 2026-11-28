@@ -33,12 +33,10 @@ export interface CommandClassification {
 const REASON_ROOT_DELETE: ToolPolicyReasonCode = 'BLOCKED_ROOT_DELETE'
 const REASON_OUTSIDE: ToolPolicyReasonCode = 'DANGEROUS_OUTSIDE'
 const REASON_REQUIRES_CONFIRM: ToolPolicyReasonCode = 'REQUIRES_CONFIRM'
-// SEC-16-05 新增规则的 reason 复用既有码：裸设备抹除归「整盘擦除」、删卷影归「系统删除」。
-// 文档建议的独立码（BLOCKED_RAW_DEVICE / BLOCKED_SHADOW_DELETE）需要同步扩
-// src/shared/tool-policy-reasons.ts 联合类型与渲染端 ToolPolicyDialog/i18n 映射，两者都在
-// 本次改动分区之外；复用语义相近的既有码（i18n 已有四语文案），deny 拦截行为与文档完全一致。
-const REASON_RAW_DEVICE: ToolPolicyReasonCode = 'BLOCKED_CIPHER_WIPE'
-const REASON_SHADOW_DELETE: ToolPolicyReasonCode = 'BLOCKED_SYSTEM_DELETE'
+// SEC-16-05 两条新规则各有独立原因码（裸设备抹除 / 删卷影副本），
+// 与「整盘擦除」「删系统目录」在策略屏上分开呈现；联合类型 + 四语映射同步收口。
+const REASON_RAW_DEVICE: ToolPolicyReasonCode = 'BLOCKED_RAW_DEVICE'
+const REASON_SHADOW_DELETE: ToolPolicyReasonCode = 'BLOCKED_SHADOW_DELETE'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MIN_TIMEOUT_MS = 10_000

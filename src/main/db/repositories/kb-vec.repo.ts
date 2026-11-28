@@ -1,6 +1,8 @@
 // sqlite-vec 向量索引管理：按维度建 vec0 虚拟表，rowid 映射到 kb_chunks.id
 // 失败/不可用时由 kb-chunk.repo 降级为纯 JS 余弦 KNN
+import type Database from 'better-sqlite3-multiple-ciphers'
 import { dbService } from '../database'
+import { cachedPrepare } from '../statement-cache'
 import { float32ToBuffer } from './kb-chunk.repo'
 
 const MAP_TABLE = 'kb_vec_map'
@@ -9,13 +11,32 @@ function vecTableName(dim: number): string {
   return `kb_vec_${dim}`
 }
 
+interface VecMapRow {
+  chunk_id: string
+  vec_rowid: number
+  dim: number
+}
+
+/** PERF-08：DELETE 的 prepare 在循环外一次性按维度取好（statement cache 命中），循环内只绑定参数 */
+function removeVecRows(db: Database.Database, rows: VecMapRow[]): void {
+  if (rows.length === 0) return
+  const byDim = new Map<number, Database.Statement<unknown[], unknown>>()
+  for (const dim of new Set(rows.map((r) => r.dim))) {
+    byDim.set(dim, cachedPrepare(db, `DELETE FROM ${vecTableName(dim)} WHERE rowid=?`))
+  }
+  for (const r of rows) byDim.get(r.dim)!.run(r.vec_rowid)
+  const ids = rows.map((r) => r.chunk_id)
+  const placeholders = ids.map(() => '?').join(',')
+  cachedPrepare(db, `DELETE FROM ${MAP_TABLE} WHERE chunk_id IN (${placeholders})`).run(...ids)
+}
+
 /** kb_vec_map 由 ensureTable 懒创建（首次 insert/search 时）：全新库从未写过向量时表不存在，
  *  而索引/删除流程会先走清理路径，此处守卫防「no such table」误报为文档索引失败 */
 function mapTableExists(): boolean {
-  return !!dbService
-    .getHandle()
-    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
-    .get(MAP_TABLE)
+  return !!cachedPrepare(
+    dbService.getHandle(),
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
+  ).get(MAP_TABLE)
 }
 
 export const kbVecRepo = {
@@ -39,12 +60,12 @@ export const kbVecRepo = {
     this.ensureTable(dim)
     const db = dbService.getHandle()
     // 先删旧映射（重建索引场景）
-    db.prepare(`DELETE FROM ${MAP_TABLE} WHERE chunk_id=?`).run(chunkId)
-    const info = db
-      .prepare(`INSERT INTO ${vecTableName(dim)}(embedding) VALUES (?)`)
-      .run(float32ToBuffer(embedding))
+    cachedPrepare(db, `DELETE FROM ${MAP_TABLE} WHERE chunk_id=?`).run(chunkId)
+    const info = cachedPrepare(db, `INSERT INTO ${vecTableName(dim)}(embedding) VALUES (?)`).run(
+      float32ToBuffer(embedding)
+    )
     const vecRowid = Number(info.lastInsertRowid)
-    db.prepare(`INSERT INTO ${MAP_TABLE}(chunk_id, vec_rowid, dim) VALUES (?, ?, ?)`).run(
+    cachedPrepare(db, `INSERT INTO ${MAP_TABLE}(chunk_id, vec_rowid, dim) VALUES (?, ?, ?)`).run(
       chunkId,
       vecRowid,
       dim
@@ -56,54 +77,38 @@ export const kbVecRepo = {
   deleteByChunk(chunkId: string): void {
     if (!mapTableExists()) return
     const db = dbService.getHandle()
-    const row = db.prepare(`SELECT vec_rowid, dim FROM ${MAP_TABLE} WHERE chunk_id=?`).get(chunkId) as
-      | { vec_rowid: number; dim: number }
-      | undefined
+    const row = cachedPrepare(db, `SELECT vec_rowid, dim FROM ${MAP_TABLE} WHERE chunk_id=?`).get(
+      chunkId
+    ) as { vec_rowid: number; dim: number } | undefined
     if (!row) return
-    db.prepare(`DELETE FROM ${vecTableName(row.dim)} WHERE rowid=?`).run(row.vec_rowid)
-    db.prepare(`DELETE FROM ${MAP_TABLE} WHERE chunk_id=?`).run(chunkId)
+    cachedPrepare(db, `DELETE FROM ${vecTableName(row.dim)} WHERE rowid=?`).run(row.vec_rowid)
+    cachedPrepare(db, `DELETE FROM ${MAP_TABLE} WHERE chunk_id=?`).run(chunkId)
   },
 
   /** 删除某文档全部分块的向量索引 */
   deleteByDoc(docId: string): void {
     if (!mapTableExists()) return
     const db = dbService.getHandle()
-    const rows = db
-      .prepare(
-        `SELECT m.chunk_id, m.vec_rowid, m.dim FROM ${MAP_TABLE} m
-         JOIN kb_chunks c ON c.id = m.chunk_id
-         WHERE c.doc_id = ?`
-      )
-      .all(docId) as Array<{ chunk_id: string; vec_rowid: number; dim: number }>
-    for (const r of rows) {
-      db.prepare(`DELETE FROM ${vecTableName(r.dim)} WHERE rowid=?`).run(r.vec_rowid)
-    }
-    if (rows.length > 0) {
-      const ids = rows.map((r) => r.chunk_id)
-      const placeholders = ids.map(() => '?').join(',')
-      db.prepare(`DELETE FROM ${MAP_TABLE} WHERE chunk_id IN (${placeholders})`).run(...ids)
-    }
+    const rows = cachedPrepare(
+      db,
+      `SELECT m.chunk_id, m.vec_rowid, m.dim FROM ${MAP_TABLE} m
+       JOIN kb_chunks c ON c.id = m.chunk_id
+       WHERE c.doc_id = ?`
+    ).all(docId) as VecMapRow[]
+    removeVecRows(db, rows)
   },
 
   /** 删除某知识库全部分块的向量索引 */
   deleteByKb(kbId: string): void {
     if (!mapTableExists()) return
     const db = dbService.getHandle()
-    const rows = db
-      .prepare(
-        `SELECT m.chunk_id, m.vec_rowid, m.dim FROM ${MAP_TABLE} m
-         JOIN kb_chunks c ON c.id = m.chunk_id
-         WHERE c.kb_id = ?`
-      )
-      .all(kbId) as Array<{ chunk_id: string; vec_rowid: number; dim: number }>
-    for (const r of rows) {
-      db.prepare(`DELETE FROM ${vecTableName(r.dim)} WHERE rowid=?`).run(r.vec_rowid)
-    }
-    if (rows.length > 0) {
-      const ids = rows.map((r) => r.chunk_id)
-      const placeholders = ids.map(() => '?').join(',')
-      db.prepare(`DELETE FROM ${MAP_TABLE} WHERE chunk_id IN (${placeholders})`).run(...ids)
-    }
+    const rows = cachedPrepare(
+      db,
+      `SELECT m.chunk_id, m.vec_rowid, m.dim FROM ${MAP_TABLE} m
+       JOIN kb_chunks c ON c.id = m.chunk_id
+       WHERE c.kb_id = ?`
+    ).all(kbId) as VecMapRow[]
+    removeVecRows(db, rows)
   },
 
   /**
@@ -128,14 +133,13 @@ export const kbVecRepo = {
     // sqlite-vec 0.1.9 支持 `embedding MATCH ? AND rowid IN (...)`：先把目标库里
     // 「启用文档」的 rowid 取出来，把过滤压进 KNN 子查询，取样即精确，不再需要超额补偿。
     const rowids = (
-      db
-        .prepare(
-          `SELECT m.vec_rowid AS rowid FROM ${MAP_TABLE} m
-           JOIN kb_chunks c ON c.id = m.chunk_id
-           WHERE m.dim = ? AND c.kb_id IN (${kbPlaceholders})
-             AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
-        )
-        .all(dim, ...kbIds) as Array<{ rowid: number }>
+      cachedPrepare(
+        db,
+        `SELECT m.vec_rowid AS rowid FROM ${MAP_TABLE} m
+         JOIN kb_chunks c ON c.id = m.chunk_id
+         WHERE m.dim = ? AND c.kb_id IN (${kbPlaceholders})
+           AND c.doc_id NOT IN (SELECT id FROM kb_documents WHERE enabled = 0)`
+      ).all(dim, ...kbIds) as Array<{ rowid: number }>
     ).map((r) => r.rowid)
     if (rowids.length === 0) return []
 
@@ -153,25 +157,24 @@ export const kbVecRepo = {
     const k = Math.max(1, Math.min(1000, Math.floor(topK)))
     const knnBatch = (batch: number[]): VecRow[] => {
       const rowidPlaceholders = batch.map(() => '?').join(',')
-      return db
-        .prepare(
-          // PERF-01：KNN 子查询必须 MATERIALIZED。此前把 vec 虚表放进 JOIN 的 FROM 里，
-          // SQLite 不物化它，vec 虚表被放到最内层逐行求值，KNN 实际执行 N 次而非 1 次
-          //（20k chunk 实测 27.5 分钟 → 64ms）。两处 `k = ?` 约束保留：sqlite-vec 0.1.9
-          // 对 KNN 子查询有「必须带 k = ?」的硬约束（见 :150-152 的历史注释）。
-          `WITH v AS MATERIALIZED (
-             SELECT rowid, distance FROM ${vecTableName(dim)}
-             WHERE embedding MATCH ? AND rowid IN (${rowidPlaceholders}) AND k = ?
-             ORDER BY distance ASC
-           )
-           SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
-           FROM v
-           JOIN ${MAP_TABLE} m ON m.vec_rowid = v.rowid AND m.dim = ?
-           JOIN kb_chunks c ON c.id = m.chunk_id
-           WHERE c.kb_id IN (${kbPlaceholders})
-           ORDER BY v.distance ASC`
-        )
-        .all(float32ToBuffer(query), ...batch, k, dim, ...kbIds) as VecRow[]
+      return cachedPrepare(
+        db,
+        // PERF-01：KNN 子查询必须 MATERIALIZED。此前把 vec 虚表放进 JOIN 的 FROM 里，
+        // SQLite 不物化它，vec 虚表被放到最内层逐行求值，KNN 实际执行 N 次而非 1 次
+        //（20k chunk 实测 27.5 分钟 → 64ms）。两处 `k = ?` 约束保留：sqlite-vec 0.1.9
+        // 对 KNN 子查询有「必须带 k = ?」的硬约束（见 :150-152 的历史注释）。
+        `WITH v AS MATERIALIZED (
+           SELECT rowid, distance FROM ${vecTableName(dim)}
+           WHERE embedding MATCH ? AND rowid IN (${rowidPlaceholders}) AND k = ?
+           ORDER BY distance ASC
+         )
+         SELECT c.id AS chunk_id, c.doc_id, c.kb_id, c.sequence, c.content, v.distance
+         FROM v
+         JOIN ${MAP_TABLE} m ON m.vec_rowid = v.rowid AND m.dim = ?
+         JOIN kb_chunks c ON c.id = m.chunk_id
+         WHERE c.kb_id IN (${kbPlaceholders})
+         ORDER BY v.distance ASC`
+      ).all(float32ToBuffer(query), ...batch, k, dim, ...kbIds) as VecRow[]
     }
     // SQLite 默认 bind 变量上限 32766；超大库分批各取 topK，再全局归并即可等价。
     const rows: VecRow[] = []

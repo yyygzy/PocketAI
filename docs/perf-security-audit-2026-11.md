@@ -994,7 +994,9 @@ safeHandle(IPC.PROVIDER_REVEAL_KEYS, (_e, id: string, token: string) => {
 
 ### PERF-07 · N+1 查询
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/main/db/repositories/kb.repo.ts:35-43`、`src/main/db/repositories/skill.repo.ts:98-106`、`src/main/attachment/attachment-ingestion.ts:94-99` ｜ **验证** 已验证
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** `src/main/db/repositories/kb.repo.ts:35-43`、`src/main/db/repositories/skill.repo.ts:98-106`、`src/main/attachment/attachment-ingestion.ts:94-99` ｜ **验证** 已验证
+
+> 修复口径：PERF-07｜kb.repo 列表改为 2 条 GROUP BY 聚合 JOIN（1000 行 prepare 2N+1→1）；skill.repo 批量 IN 分片；attachment 引用判断走 v85 idx_kb_docs_source。
 
 **问题**
 
@@ -1014,7 +1016,9 @@ safeHandle(IPC.PROVIDER_REVEAL_KEYS, (_e, id: string, token: string) => {
 
 ### PERF-08 · `prepare()` 每次重建
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** 多处；典型 `src/main/db/repositories/kb-vec.repo.ts:78-80`（在循环体内 prepare）｜ **验证** 已实测
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** 多处；典型 `src/main/db/repositories/kb-vec.repo.ts:78-80`（在循环体内 prepare）｜ **验证** 已实测
+
+> 修复口径：PERF-08｜新建 statement-cache（WeakMap<db, Map<sql,stmt>>），热路径统一 cachedPrepare，kb-vec 循环内 prepare 移出；3000× UPDATE 基准 447ms→20ms（21.9×）。
 
 **问题**
 
@@ -1031,7 +1035,9 @@ safeHandle(IPC.PROVIDER_REVEAL_KEYS, (_e, id: string, token: string) => {
 
 ### PERF-09 · 索引队列无上限、无去重、无退避
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/main/knowledge/index-queue.ts:48-84` ｜ **验证** 已验证
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** `src/main/knowledge/index-queue.ts:48-84` ｜ **验证** 已验证
+
+> 修复口径：PERF-09｜容量上限 500 + docId 全生命周期去重 + 并发上限（生产单例 3）+ 指数退避重试 3 次 + app_config 进度上报；默认构造保持旧语义兼容既有测试。
 
 **问题**
 
@@ -1050,7 +1056,9 @@ safeHandle(IPC.PROVIDER_REVEAL_KEYS, (_e, id: string, token: string) => {
 
 ### PERF-10 · 工具注册表每次访问重建全量索引
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/main/tools/registry.ts:161-177`（`buildIndex`）、调用点 `src/main/agent/engine.ts:2647,2674,3460,1504,1604` ｜ **验证** 已验证
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** `src/main/tools/registry.ts:161-177`（`buildIndex`）、调用点 `src/main/agent/engine.ts:2647,2674,3460,1504,1604` ｜ **验证** 已验证
+
+> 修复口径：PERF-10｜engine 一轮内复用同一 index，N 条调用 buildIndex 从 2N+2 降为 1；失效覆盖 MCP 状态/增删改/帧结束。
 
 **问题**
 
@@ -1069,7 +1077,9 @@ safeHandle(IPC.PROVIDER_REVEAL_KEYS, (_e, id: string, token: string) => {
 
 ### SEC-16-12 · 导出 HTML 的 `href` 绕过协议白名单
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/renderer/src/utils/export-html.tsx:131-139`（KB 问答版在 `:206-214`）｜ **验证** 已验证
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** `src/renderer/src/utils/export-html.tsx:131-139`（KB 问答版在 `:206-214`）｜ **验证** 已验证
+
+> 修复口径：SEC-16-12｜两处 sources href 走 safeHttpHref + 导出 head CSP meta；危险协议降级纯文本。
 
 **问题**
 
@@ -1108,7 +1118,9 @@ const href = s.kind === 'web' ? safeHttpHref(s.url) : null
 
 ### SEC-16-13 · Markdown 远程图片向第三方泄漏 IP 与 Referer
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/renderer/src/modules/chat/Markdown.tsx:31-32,183-186`、`src/main/security/csp.ts:17-18` ｜ **验证** 已验证
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** `src/renderer/src/modules/chat/Markdown.tsx:31-32,183-186`、`src/main/security/csp.ts:17-18` ｜ **验证** 已验证
+
+> 修复口径：SEC-16-13｜SAFE_IMG_SRC 收紧 data:/blob: + CSP img-src 去 https: + referrerPolicy + cacheBust:false；默认不加载远程图片，降级可点占位链接。
 
 **问题**
 
@@ -1138,7 +1150,9 @@ LLM 输出的 markdown 可包含 `![](https://attacker.tld/pixel.png)`，渲染�
 
 ### SEC-16-14 · mermaid SVG 未做二次净化
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/renderer/src/modules/chat/MermaidBlock.tsx:53-59,103-108` ｜ **验证** 已验证
+**级别** 中 ｜ **状态** 已修复 ｜ **位置** `src/renderer/src/modules/chat/MermaidBlock.tsx:53-59,103-108` ｜ **验证** 已验证
+
+> 修复口径：SEC-16-14｜DOMPurify 二次净化 svg+svgFilters，FORBID_TAGS/ATTR；strict+DOMPurify+CSP 三层注释；dompurify 显式入 dependencies。
 
 **问题**
 
@@ -1177,7 +1191,9 @@ setSvg(CLEAN)
 
 ### SEC-16-15 · License 用 RSA PKCS#1 v1.5 且公钥不可轮换
 
-**级别** 中 ｜ **状态** 待修复 ｜ **位置** `src/main/license/license.ts:131-143`、`src/main/license/public-key.ts:4-5`、发行侧 `scripts/lib/issue-license.js:86` ｜ **验证** 已实测
+**级别** 中 ｜ **状态** 修复中 ｜ **位置** `src/main/license/license.ts:131-143`、`src/main/license/public-key.ts:4-5`、发行侧 `scripts/lib/issue-license.js:86` ｜ **验证** 已实测
+
+> 修复口径：签名字段前缀分流（ed25519: / 旧 RSA 裸 base64），验签严格 fail-closed；ED25519_PUBLIC_KEY_B64 留空待运维离线生成密钥对后填入，与 SEC-16-02 私钥轮换 / 客户端发布同批上线。旧 RSA 证过渡期仍有效，过渡截止由产品决定。
 
 **问题**
 
@@ -1228,7 +1244,9 @@ function verifySignature(signedData: string, signatureB64: string): boolean {
 
 ### SEC-16-16 · 便携导出 MOXENC1 的 KDF 档位钉死 N=2^15 且格式不可演进
 
-**级别** 低 ｜ **位置** `src/main/crypto/portable-crypto.ts:6-11,31,57`
+**级别** 低 ｜ **状态** 已修复 ｜ **位置** `src/main/crypto/portable-crypto.ts:6-11,31,57`
+
+> 修复口径：SEC-16-16｜MOXENC2 + kdfId(1)：新写 KDF_CURRENT，旧 MOXENC1 仍走 KDF_LEGACY；未知档位 fail-closed。
 
 `KDF_LEGACY = { N: 32768, r=8, p=1 }`（`crypto/index.ts:44`），内存 32 MiB，是 `KDF_CURRENT`（N=2^17，128 MiB，**恰达 OWASP 最低推荐**）的 1/4 工作量。
 
@@ -1240,7 +1258,9 @@ function verifySignature(signedData: string, signatureB64: string): boolean {
 
 ### SEC-16-17 · 恢复码 Crockford Base32 容错映射定义但未接线
 
-**级别** 低 ｜ **位置** `src/main/crypto/recovery-key.ts:25-32,51-56`
+**级别** 低 ｜ **状态** 已修复 ｜ **位置** `src/main/crypto/recovery-key.ts:25-32,51-56`
+
+> 修复口径：SEC-16-17｜normalizeRecoveryCode 接线 Crockford 映射 I/L→1、O→0、U→V，旧码不变。
 
 `DECODE_MAP['I']/'L'] → 1`、`DECODE_MAP['O'] → 0` 已定义，但全仓 `DECODE_MAP` 仅命中定义处，`normalizeRecoveryCode` 只做了大写 + 去分隔符。
 
@@ -1371,5 +1391,6 @@ export function normalizeRecoveryCode(input: string): string {
 | 2026-11-27 | SEC-Batch-16（初稿） | 5 路并行专项审计；27 项发现（3 严重 / 8 高 / 14 中 / 2 低）；其中 4 项已实测复现 | 已评审修订 |
 | 2026-11-27 | 修复批（P0+P1） | 17 项实施完成：SEC-16-01（run_tests/post-edit-validation 直跑 Node + 路径白名单）、SEC-16-02（打包拦截脚本，私钥运维待办）、SEC-16-03（fs 守卫逐段 lstat+readlink 重写）、SEC-16-04/05（终端硬拒+审计+锁屏清会话、shell deny-list 补齐；reasonCode 正式拆分留下迭代）、SEC-16-06（WebDAV 强制 https + 本地备份 0600）、SEC-16-07（字段解密 fail-closed 迁移闸）、SEC-16-08（注释口径修正）、SEC-16-09（日历 path-token）、SEC-16-10（备份合并 KB 行级合并+向量一致性收口）、SEC-16-11（reveal 一次性令牌+审计+冷却）、PERF-01（KNN MATERIALIZED CTE）、PERF-02/03（highlight 收敛+组件提升+rAF 合批）、PERF-04（复合索引+游标分页；ChatView 接线留下迭代）、PERF-05（FTS 触发器按 rowid 重写，v84）、PERF-06（sumCostSince 指纹缓存+SQL 预过滤）；新增回归测试 12 个文件 111 例，全量 760 文件 7975 用例通过，tsc --noEmit 0 错误 | 已修复 |
 | 2026-11-27 | 文档自审与勘误 | 对本文件自身做事实核查（两路核查代理核对约 90 条行号引用与全部事实断言 + 改法代码逐条推演）：修正 7 处事实错误（PKBK2 档位断言、0o600 计数、「唯一 http 通道」、throttle 漏检、Options 枚举、createCipheriv 计数、变更记录算术）、4 处改法缺陷（ELECTRON_RUN_AS_NODE 前提、TEST_FILE_RE 与意图不符、symlink 守卫越界回溯、old.rowid 触发器语义）、6 处偏差（SEC-16-10 表清单全引、PERF-04/06 冗余索引、SEC-16-07 函数名、SEC-16-05 正则缺口、§1.2 表述）；补充引文约定 | 已修订（本文档当前版本） |
+| 2026-11-28 | 修复批（P2+P3） | 10 项实施完成并接上 4 处遗留：PERF-07（GROUP BY 聚合 + 批量 IN + v85 source 索引，1000 行 prepare 2N+1→1）、PERF-08（statement-cache WeakMap，基准 21.9×）、PERF-09（容量/去重/并发 3/指数退避/app_config 进度）、PERF-10（帧缓存，N 条调用 buildIndex 2N+2→1 + 失效路径）、SEC-16-12（导出 HTML href 白名单+CSP）、SEC-16-13（远程图片零跨域请求：SAFE_IMG_SRC 收紧+CSP img-src+referrerPolicy+cacheBust:false；行为变化=默认不显示远程图片）、SEC-16-14（DOMPurify 二次净化+dompurify 显式依赖）、SEC-16-15（Ed25519 签名字段前缀分流，公钥待运维填入 → 修复中）、SEC-16-16（MOXENC2+kdfId，旧格式兼容）、SEC-16-17（Crockford 容错映射接线）；遗留收口：reasonCode 独立拆分+两套四语字典同步、ChatView 滚动加载接 MESSAGE_LIST_PAGE（保留 §309 闸门并登记新写点）、SecurityEventKind 收编 credential_reveal/terminal_command、隐藏即杀终端会话。新增测试 12 个文件 80 例；全量 771 文件 8036 用例通过（1 例沙箱清理超时 flake，单跑 13/13 复绿），tsc 0 错误 | 已修复（SEC-16-15 代码侧完成，公钥待运维） |
 
 > 回写建议：本批次定稿后，把 P0 三项（SEC-16-01 / SEC-16-02 / PERF-01）与 P1 六项追加进 `docs/security-audit-ledger.md` 的「五、修复批次规划」表，并在「八、变更记录」新增一行。

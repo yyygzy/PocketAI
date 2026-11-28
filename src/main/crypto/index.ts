@@ -9,8 +9,10 @@
 //   KDF_LEGACY  = N=2^15,r=8,p=1（32MiB，本机实测 138–142ms，2026-10-17）——历史所有落盘工件的档位
 //   KDF_CURRENT = N=2^17,r=8,p=1（128MiB，本机实测 556–601ms，2026-10-17）——新设/改密后的主密码档位
 //   档位必须随库落盘（appConfigRepo.getKdfParams），否则旧库派生不匹配=把用户锁在门外。
-//   固定混淆密钥、恢复包 rv1:、加密导出 MOXENC1、备份 PKBK1/2 一律**显式钉在 KDF_LEGACY**：
+//   固定混淆密钥、恢复包 rv1:、备份 PKBK1/2 一律**显式钉在 KDF_LEGACY**：
 //   它们的格式里都没有参数位，改动等于一次性打爆既有数据（详见台账 SEC-32②）。
+//   便携导出已演进为 MOXENC2（头内 kdfId 选档，新写 KDF_CURRENT；旧 MOXENC1 仍按 KDF_LEGACY
+//   读取，见 portable-crypto.ts / SEC-16-16）。
 //   这是全应用唯一的派生实现（历史上曾有 Argon2id，因异步无法满足同步初始化已移除，
 //   勿再引入第二套派生算法）。
 // 字段加密格式（见 field-encrypt.ts）：
