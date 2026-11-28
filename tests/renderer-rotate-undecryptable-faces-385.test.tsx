@@ -217,3 +217,53 @@ describe('385 解锁窗：恢复码重置成功页那一格（这一发也换了
     expect(document.body.textContent).not.toContain(MARK)
   })
 })
+
+// ─── C2：改密轮换出的新恢复码必须被真正保存，不能被 × / 遮罩绕过 ───
+
+describe('C2 改密后强制保存新恢复码', () => {
+  async function submitChange(over: Record<string, unknown> = {}) {
+    mountPanel(dbUnlocked, {
+      changePassword: () => ({ ok: true, recoveryCode: 'NEW-RECOVERY-CODE-0123456789' }),
+      copySensitiveToClipboard: () => ({ ok: true }),
+      saveRecoveryFile: () => ({ ok: true }),
+      ...over
+    })
+    fireEvent.click(screen.getByText(zh['enc.changePwd']))
+    const inputs = pwdInputs()
+    fireEvent.change(inputs[0]!, { target: { value: 'old-master-pwd' } })
+    fireEvent.change(inputs[1]!, { target: { value: '1234567890' } })
+    fireEvent.change(inputs[2]!, { target: { value: '1234567890' } })
+    fireEvent.click(screen.getByText(zh['common.confirm']))
+    await waitFor(() => expect(screen.getByText(zh['enc.recoveryRotatedTitle'])).toBeTruthy())
+  }
+
+  const confirmBtn = (): HTMLButtonElement => screen.getByText(zh['enc.recoverySaved']) as HTMLButtonElement
+
+  it('遮罩与 × 都关不掉；未复制/另存前确认键禁用', async () => {
+    await submitChange()
+    const overlay = screen.getByText(zh['enc.recoveryRotatedTitle']).closest('.fixed') as HTMLElement
+    fireEvent.click(overlay)
+    expect(screen.getByText(zh['enc.recoveryRotatedTitle'])).toBeTruthy()
+    expect(Array.from(overlay.querySelectorAll('button')).some((b) => b.textContent === '×')).toBe(false)
+    expect(confirmBtn().disabled).toBe(true)
+    expect(screen.getByText(zh['enc.recoverySaveRequired'])).toBeTruthy()
+  })
+
+  it('复制成功后确认键放行', async () => {
+    await submitChange()
+    fireEvent.click(screen.getByText(zh['enc.recoveryCopy']))
+    await waitFor(() => expect(confirmBtn().disabled).toBe(false))
+  })
+
+  it('复制失败仍禁用；另存成功才放行', async () => {
+    await submitChange({
+      copySensitiveToClipboard: () => ({ ok: false }),
+      saveRecoveryFile: () => ({ ok: true })
+    })
+    fireEvent.click(screen.getByText(zh['enc.recoveryCopy']))
+    await waitFor(() => expect(screen.getByText(zh['common.copyFailed'])).toBeTruthy())
+    expect(confirmBtn().disabled).toBe(true)
+    fireEvent.click(screen.getByText(zh['enc.recoverySaveFile']))
+    await waitFor(() => expect(confirmBtn().disabled).toBe(false))
+  })
+})

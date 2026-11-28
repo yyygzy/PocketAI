@@ -881,7 +881,7 @@ export const en = {
   'agent.tplPhDb': 'SQLite database file path (full path)',
   'agent.tplDescTavily': 'Tavily web search (API key required) — a live retrieval tool for the Agent',
   'agent.tplPhApiKey': 'API key',
-  'agent.tplSecretHint': 'The key is stored only in the local database with field-level encryption; it is not saved while no master password is set.',
+  'agent.tplSecretHint': 'The key is stored only in the local database with field-level obfuscation; it is not saved while no master password is set.',
   'agent.toolRun': 'Run',
   'agent.toolRunning': 'Running…',
   'agent.toolRunHint': 'This calls the tool for real; side effects apply',
@@ -1199,6 +1199,7 @@ export const en = {
   'channel.tokenClearTip': 'Clear the saved credential',
   'channel.secretTooLong': 'Credential is too long (max 512 characters); not saved',
   'secret.noneModeBlocked': 'No master password is set, so this credential was not saved. Set a master password in Settings → Data & Security and try again; existing credentials can still be read or deleted.',
+  'secret.unprotectedBadge': 'Credentials unprotected',
 
   // Telegram
   'channel.telegram.title': 'Telegram',
@@ -2692,7 +2693,7 @@ export const en = {
   'enc.status': 'Current status',
   'enc.unlocked': 'Unlocked',
   'enc.locked': 'Locked',
-  'enc.field': 'Field encryption',
+  'enc.field': 'Field obfuscation',
   'enc.kdf': 'Key derivation',
   'enc.kdfValue': 'scrypt N=2^{tier} r=8 p=1',
   'enc.kdfUpgradeHint': 'This database still uses the legacy tier (N=2^15). Change the master password once and it upgrades automatically to N=2^17 (4× offline brute-force cost, about +0.5s per unlock).',
@@ -2713,7 +2714,7 @@ export const en = {
   'enc.autoLockDescNone': 'Automatically cover the screen after the selected idle time; without a master password it continues without any credential',
   'enc.lockNow': 'Lock now (Ctrl+L)',
   'enc.hint': 'AES-256-GCM encryption; the master key is derived via scrypt. Generate a recovery key so a forgotten password does not lock you out forever.',
-  'enc.hintNone': 'Without a master password, the "field encryption" and lock states above only reflect local obfuscation and UI masking — the data itself stays plaintext.',
+  'enc.hintNone': 'Without a master password, the "field obfuscation" and lock states above only reflect local obfuscation and UI masking — the data itself stays plaintext.',
   'enc.setPwdTitle': 'Set master password',
   'enc.setPwdDesc': 'AES-256-GCM encryption will be enabled for the database.',
   'enc.setPwdWarn': '⚠️ This re-encrypts the whole database. A backup is recommended.',
@@ -2762,6 +2763,7 @@ export const en = {
   'enc.recoverySaveFile': 'Save to file',
   'enc.clipboardAutoClear': 'Copied — clipboard clears automatically in {s}s (immediately on lock)',
   'enc.recoverySaved': "I've saved it safely",
+  'enc.recoverySaveRequired': 'Copy or save the new recovery code before confirming.',
   'enc.recoveryModalWarn': 'Anyone with this key can reset your master password. Do not store it inside this encrypted folder or in a public place.',
 
   // ── First-run wizard ──

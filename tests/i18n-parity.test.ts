@@ -90,6 +90,19 @@ describe('i18n 字典对等', () => {
       expect(hint, `${name} 的清理提示没点名设置页那一栏`).toContain(d['dh.integrity.title']!)
     }
   })
+
+  // SEC-16-08：保留 none 默认，但四语都必须说实话——字段是「混淆」不是「加密」，凭据是「未受保护」
+  it('四语都把字段混淆与凭据未受保护说清', () => {
+    const OBF: Record<string, string> = { zh: '混淆', en: 'obfuscation', ja: '難読化', ko: '난독화' }
+    const UNPROTECTED: Record<string, string> = { zh: '未受保护', en: 'unprotected', ja: '保護されていません', ko: '보호되지 않음' }
+    for (const name of names) {
+      const d = dicts[name]!
+      for (const key of ['enc.field', 'enc.hintNone', 'agent.tplSecretHint', 'wizard.secSubtitle']) {
+        expect(d[key]!.toLowerCase(), `${name}.${key} 仍在说「加密」`).toContain(OBF[name]!.toLowerCase())
+      }
+      expect(d['secret.unprotectedBadge']!.toLowerCase(), `${name} 缺凭据未受保护标注`).toContain(UNPROTECTED[name]!.toLowerCase())
+    }
+  })
 })
 
 // 引用了但四本字典都没有的 key：面板会原样显示 `a.b.c`。

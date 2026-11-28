@@ -882,7 +882,7 @@ export const zh = {
   'agent.tplPhDb': 'SQLite 数据库文件路径（完整路径）',
   'agent.tplDescTavily': 'Tavily 网页搜索（需要 API key），给 Agent 一个实时检索入口',
   'agent.tplPhApiKey': 'API key',
-  'agent.tplSecretHint': '密钥只写入本地数据库并做字段加密；未设主密码时不会被保存。',
+  'agent.tplSecretHint': '密钥只写入本地数据库并做字段混淆；未设主密码时不会被保存。',
   'agent.toolRun': '试运行',
   'agent.toolRunning': '运行中…',
   'agent.toolRunHint': '将真实调用该工具，注意副作用',
@@ -1200,6 +1200,7 @@ export const zh = {
   'channel.tokenClearTip': '清除已保存的凭据',
   'channel.secretTooLong': '凭据过长（上限 512 字符），未保存',
   'secret.noneModeBlocked': '未设置主密码，这条凭据不会被保存。请先在「设置 → 数据与安全」中设置主密码后重试；已有凭据仍可读取或删除。',
+  'secret.unprotectedBadge': '凭据未受保护',
 
   // Telegram
   'channel.telegram.title': 'Telegram',
@@ -2693,7 +2694,7 @@ export const zh = {
   'enc.status': '当前状态',
   'enc.unlocked': '已解锁',
   'enc.locked': '已锁定',
-  'enc.field': '字段加密',
+  'enc.field': '字段混淆',
   'enc.kdf': '密钥派生',
   'enc.kdfValue': 'scrypt N=2^{tier} r=8 p=1',
   'enc.kdfUpgradeHint': '当前库仍是历史档位（N=2^15）。改一次主密码即自动升到现行档位（N=2^17：离线暴破成本 4×，解锁约多 0.5 秒）。',
@@ -2714,7 +2715,7 @@ export const zh = {
   'enc.autoLockDescNone': '无操作超过所选时间后自动遮住界面；未设主密码时不需要任何凭据即可继续',
   'enc.lockNow': '立即锁定（Ctrl+L）',
   'enc.hint': 'AES-256-GCM 加密，主密码通过 scrypt 派生密钥。建议生成恢复密钥，以防忘记密码后数据无法找回。',
-  'enc.hintNone': '未设主密码时，上述「字段加密」与锁定状态只反映本地混淆和界面遮挡，数据本身仍是明文。',
+  'enc.hintNone': '未设主密码时，上述「字段混淆」与锁定状态只反映本地混淆和界面遮挡，数据本身仍是明文。',
   'enc.setPwdTitle': '设置主密码',
   'enc.setPwdDesc': '将对数据库启用 AES-256-GCM 加密。',
   'enc.setPwdWarn': '⚠️ 此操作会重新加密整个数据库，建议先备份。',
@@ -2763,6 +2764,7 @@ export const zh = {
   'enc.recoverySaveFile': '保存为文件',
   'enc.clipboardAutoClear': '已复制到剪贴板，{s} 秒后自动清除（锁屏时立即清除）',
   'enc.recoverySaved': '我已妥善保存',
+  'enc.recoverySaveRequired': '请先复制或另存新恢复码，再确认已保存。',
   'enc.recoveryModalWarn': '任何拿到此密钥的人都可以重置你的主密码，请勿保存在当前加密目录或公开位置。',
 
   // ── 首启向导 ──
@@ -2810,7 +2812,7 @@ export const zh = {
   'wizard.apiKeyRequired': '需要填写 API Key',
   'wizard.encOptionalTitle': '设置主密码（推荐）',
   'wizard.secTitle': '🔐 先设主密码（推荐）',
-  'wizard.secSubtitle': '主密码派生的真实密钥同时保护数据库与各项凭据。可以跳过，但未设主密码时新的 API Key 不会被保存：那把「字段加密」密钥随源码公开，拿到本机数据目录就能还原。',
+  'wizard.secSubtitle': '主密码派生的真实密钥同时保护数据库与各项凭据。可以跳过，但未设主密码时新的 API Key 不会被保存：那把「字段混淆」密钥随源码公开，拿到本机数据目录就能还原。',
   'wizard.keyNeedsMaster': '未设置主密码，API Key 不会被保存（未设主密码时它只是本地混淆）。请回到上一步设置主密码后再继续。',
   'wizard.goSetMaster': '← 回到上一步设置主密码',
   'wizard.doneEncOff': '未设主密码：数据库为明文，API Key 等字段值只是本地混淆，不是安全边界。建议尽快到「设置 → 数据与安全」设置主密码。',

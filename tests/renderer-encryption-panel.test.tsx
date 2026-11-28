@@ -38,6 +38,11 @@ describe('none 模式的诚实呈现（SEC-1 B2）', () => {
     expect(screen.queryByText(/透明（AES-256-GCM）/)).toBeNull()
   })
 
+  it('SEC-16-08：none 模式上屏「凭据未受保护」短标注', () => {
+    mount(none)
+    expect(screen.getByText(zh['secret.unprotectedBadge'])).toBeTruthy()
+  })
+
   it('不显示密钥派生行（无主密码就谈不上主密钥派生档位）', () => {
     mount(none)
     expect(screen.queryByText(/scrypt N=/)).toBeNull()

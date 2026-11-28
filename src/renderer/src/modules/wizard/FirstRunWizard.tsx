@@ -729,6 +729,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
               <div className="text-[12px] text-[var(--color-text)] font-medium mb-1">
                 🔐 {t('wizard.encOptionalTitle')}
               </div>
+              <p className="text-[11px] text-[var(--color-warning)] mb-2">{t('secret.unprotectedBadge')}</p>
               <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-2">
                 {t('wizard.encOptionalHint')}
               </p>
@@ -990,7 +991,7 @@ export const FirstRunWizard: React.FC<{ variant: WizardVariant; onClose: () => v
             </div>
           ) : (
             <div className="unlock-recovery-warn rounded-lg p-3 text-[11px] leading-relaxed">
-              ⚠️ {t('wizard.doneEncOff')}
+              <span className="font-medium">⚠️ {t('secret.unprotectedBadge')}</span> {t('wizard.doneEncOff')}
             </div>
           )}
 

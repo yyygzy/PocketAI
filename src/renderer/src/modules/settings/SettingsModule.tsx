@@ -474,10 +474,10 @@ const PathRow: React.FC<{ label: string; value: string }> = ({ label, value }) =
 
 // ─── Modal 弹层（统一弹层）─────────────────────────────────────
 
-const Modal: React.FC<{ open: boolean; title: string; onClose: () => void; children: React.ReactNode; width?: number }> = ({ open, title, onClose, children, width = 360 }) => {
+const Modal: React.FC<{ open: boolean; title: string; onClose: () => void; children: React.ReactNode; width?: number; dismissible?: boolean }> = ({ open, title, onClose, children, width = 360, dismissible = true }) => {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-modal-overlay)] backdrop-blur-sm" onClick={dismissible ? onClose : undefined}>
       <div
         className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] shadow-2xl p-5"
         style={{ width }}
@@ -485,7 +485,7 @@ const Modal: React.FC<{ open: boolean; title: string; onClose: () => void; child
       >
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-sm font-semibold">{title}</h4>
-          <button className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-lg leading-none" onClick={onClose}>×</button>
+          {dismissible && <button className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-lg leading-none" onClick={onClose}>×</button>}
         </div>
         {children}
       </div>
@@ -537,6 +537,7 @@ export const EncryptionPanel: React.FC<{ enc: EncryptionStatus | null; err: stri
         <p className="unlock-recovery-warn">{t('enc.kdfUpgradeHint')}</p>
       )}
 
+      {!encrypted && <p className="text-xs text-[var(--color-warning)] mb-2">{t('secret.unprotectedBadge')}</p>}
       {!encrypted && <p className="unlock-recovery-warn mb-2">{t('enc.noneWarn')}</p>}
       {!encrypted && <p className="unlock-recovery-warn mb-2">{t('enc.noneCredentialGate')}</p>}
       <AutoLockRow encrypted={encrypted} />
@@ -774,6 +775,7 @@ const ChangePasswordBtn: React.FC<{ onDone: () => void; setNotice: NoticeFn }> =
           code={rotatedCode}
           title={t('enc.recoveryRotatedTitle')}
           onClose={() => setRotatedCode('')}
+          mandatory
         />
       )}
     </>
@@ -849,13 +851,17 @@ const LockBtn: React.FC<{ onDone: () => void }> = ({ onDone }) => {
 
 // ─── 恢复密钥 ───────────────────────────────────────────────────
 
-/** 恢复码一次性展示弹窗：复制 / 另存文件 / 确认已保存 */
-const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => void }> = ({
+/** 恢复码一次性展示弹窗：复制 / 另存文件 / 确认已保存
+ *  mandatory=true 用于改密轮换：遮罩与 × 不可关，且必须先复制或另存成功才能确认。 */
+const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => void; mandatory?: boolean }> = ({
   code,
   title,
-  onClose
+  onClose,
+  mandatory = false
 }) => {
   const { t } = useI18n()
+  // 复制反馈 2s 后复位，但「已复制/已另存」这件事要一直记着，否则确认键会自己变回禁用
+  const [ackArmed, setAckArmed] = useState(false)
   // 恢复码走主进程敏感剪贴板（30s 自动过期），反馈态 2s 后自动复位
   const sensitiveWriter = useCallback(async (text: string) => {
     const r = await window.pocketai.copySensitiveToClipboard(text)
@@ -865,7 +871,7 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
   const { notice: copyFailed, show: showCopyFailed } = useTransientNotice<boolean>(3000)
   const { notice: saveFailed, show: showSaveFailed } = useTransientNotice<boolean>(3000)
   return (
-    <Modal open title={title} onClose={onClose}>
+    <Modal open title={title} onClose={onClose} dismissible={!mandatory}>
       <p className="text-xs text-[var(--color-warning)] mb-2">{t('enc.recoveryShowOnce')}</p>
       <textarea
         readOnly
@@ -879,7 +885,8 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
           className="btn-ghost"
           onClick={async () => {
             try {
-              if (!(await copy(code))) showCopyFailed(true)
+              if (await copy(code)) setAckArmed(true)
+              else showCopyFailed(true)
             } catch {
               // 恢复码复制失败必须提示：误以为已复制会导致无法找回数据
               showCopyFailed(true)
@@ -894,7 +901,11 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
             try {
               const r = await window.pocketai.saveRecoveryFile(code)
               // canceled＝用户在选择器里取消，不是失败；只有 ok:false 且非 canceled 才报错
-              if (r.ok === false && !r.canceled) showSaveFailed(true)
+              if (r.ok === false) {
+                if (!r.canceled) showSaveFailed(true)
+                return
+              }
+              setAckArmed(true)
             } catch {
               showSaveFailed(true)
             }
@@ -914,11 +925,14 @@ const RecoveryCodeModal: React.FC<{ code: string; title: string; onClose: () => 
       {saveFailed && (
         <p className="text-[11px] text-[var(--color-danger)] mb-2">{t('common.saveFailed')}</p>
       )}
+      {mandatory && !ackArmed && (
+        <p className="text-[11px] text-[var(--color-warning)] mb-2">{t('enc.recoverySaveRequired')}</p>
+      )}
       <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed mb-3">
         {t('enc.recoveryModalWarn')}
       </p>
       <div className="flex justify-end">
-        <button className="btn-primary" onClick={onClose}>{t('enc.recoverySaved')}</button>
+        <button className="btn-primary" disabled={mandatory && !ackArmed} onClick={onClose}>{t('enc.recoverySaved')}</button>
       </div>
     </Modal>
   )

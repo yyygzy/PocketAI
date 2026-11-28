@@ -624,7 +624,9 @@ describe('§364 闸门：waitFor 的门不许等 A、断言却读 B（屏）', (
       'tests/renderer-reminder-busy-332.test.tsx': 7,
       'tests/renderer-reminders-modal-reschedule.test.tsx': 3,
       'tests/renderer-reminders-modal-rule.test.tsx': 1,
-      'tests/renderer-rotate-undecryptable-faces-385.test.tsx': 8,
+      // C2 改密强制保存新恢复码：净新增 4 颗门——等轮换弹窗标题、等确认键从禁用转可用（复制/另存各一路）、等复制失败提示；
+      // 到货见证都写在门里第一句，门后只读按钮 disabled 与提示文本，未引入新形状。上限 8→12，不留余量。
+      'tests/renderer-rotate-undecryptable-faces-385.test.tsx': 12,
       'tests/renderer-settings-webdav-undecryptable-381.test.tsx': 12,
       'tests/renderer-sidebar-badge-250.test.tsx': 1,
       'tests/renderer-sidebar-nav.test.tsx': 2,
