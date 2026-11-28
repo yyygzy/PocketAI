@@ -216,8 +216,9 @@ export function killAllTerminals(): void {
 // APP_LOCKED 网关兜住（ipcMain.handle 包装，既有机制，此处不重复）。
 //
 // 已知边界（审计报告已记）：「应用隐藏但未开启自动锁屏」时 lockService 不会进入 locked 态
-// （onAppHidden 只在 autoLockTimeout>0 时排定时器），没有事件可订阅——要做到「隐藏即杀」
-// 需要改 lock.ts 或窗口 hide 钩子，均在本次改动分区之外。
+// （onAppHidden 只在 autoLockTimeout>0 时排定时器），这里没有 locked 事件可订阅；
+// 「隐藏即杀」改由主窗口 hide/minimize 钩子直接调 killAllTerminals（见 src/main/index.ts），
+// 两处重复调用幂等。
 lockService.onStateChange((evt) => {
   if (evt.state !== 'locked') return
   const count = sessions.size
